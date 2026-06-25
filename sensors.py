@@ -1,0 +1,485 @@
+"""
+sensors.py — Pembacaan sensor melalui USB RS485 (Modbus RTU).
+
+Sensor yang didukung:
+  - pH    : Modbus slave ID 2, holding register 0-1
+  - TSS   : Modbus slave ID 10, holding register 0-4 (float CDAB)
+  - Debit : Modbus slave ID 1, holding register 0-29 (double ABCD, reg 15-18)
+"""
+
+import inspect
+import random
+import struct
+import threading
+import time
+import logging
+from typing import Optional
+
+from constants import HAS_MODBUS, ModbusSerialClient
+from config    import save_config, detect_usb_rs485
+from models    import SensorReading
+
+log = logging.getLogger(__name__)
+
+
+# ─── Modbus Sensor Reader ─────────────────────────────────────────────────────
+class SensorReader:
+    """
+    Membaca tiga sensor kualitas air via Modbus RTU over USB RS485,
+    dan sensor arus/tegangan via ADC.
+
+    USB RS485 adapter (CH340/CP210x/FT232/PL2303) mengelola sinyal DE/RE
+    secara otomatis — tidak perlu pin GPIO RTS seperti pada Arduino.
+    """
+
+    def __init__(self, cfg: dict, on_error=None):
+        self.cfg       = cfg
+        self._mb       = None
+        self._port_ok  = False
+        self._on_error = on_error or (lambda msg: None)
+        self._lock     = threading.Lock()   # proteksi akses Modbus antar-thread
+        self._connect()
+
+    # ── Koneksi Modbus ────────────────────────────────────────────────────────
+    def _connect(self) -> None:
+        if not HAS_MODBUS or self.cfg.get("simulate_sensors"):
+            return
+
+        use_hat = self.cfg.get("use_rs485_hat", False)
+
+        if use_hat:
+            # ── Mode HAT (UART GPIO) ──────────────────────────────────────────
+            # Port UART HAT: /dev/ttyAMA0 (RPi), /dev/ttyS0, /dev/serial0
+            port = self.cfg.get("rs485_hat_port", "/dev/ttyAMA0")
+            kwargs = dict(
+                port     = port,
+                baudrate = self.cfg["baud_rate"],
+                stopbits = 1,
+                bytesize = 8,
+                parity   = "N",
+                timeout  = 1,
+                # Kontrol DE/RE via RTS — aktif saat kirim, nonaktif saat terima
+                rts_level_for_send = True,
+                rts_level_for_recv = False,
+                broadcast_enable   = False,
+            )
+            mode_label = "RS485 HAT"
+        else:
+            # ── Mode USB RS485 adapter ────────────────────────────────────────
+            port = self.cfg["serial_port"]
+            if not port or port in ("COM3", "/dev/ttyUSB0"):
+                detected = detect_usb_rs485()
+                if detected:
+                    port = detected
+                    self.cfg["serial_port"] = port
+                    save_config(self.cfg)
+            kwargs = dict(
+                port     = port,
+                baudrate = self.cfg["baud_rate"],
+                stopbits = 1,
+                bytesize = 8,
+                parity   = "N",
+                timeout  = 1,
+            )
+            mode_label = "USB RS485"
+
+        try:
+            self._mb = ModbusSerialClient(**kwargs)
+            if self._mb.connect():
+                log.info(f"{mode_label} terhubung — port: {port}  baud: {self.cfg['baud_rate']}")
+                self._port_ok = True
+            else:
+                log.warning(f"{mode_label} gagal membuka port {port}")
+                self._mb      = None
+                self._port_ok = False
+        except Exception as e:
+            # rts_level_for_send tidak didukung semua versi pymodbus —
+            # coba ulang tanpa parameter RTS
+            if use_hat and "rts_level" in str(e):
+                log.warning(f"HAT RTS tidak didukung pymodbus versi ini, coba tanpa RTS: {e}")
+                try:
+                    kwargs.pop("rts_level_for_send", None)
+                    kwargs.pop("rts_level_for_recv", None)
+                    kwargs.pop("broadcast_enable",   None)
+                    self._mb = ModbusSerialClient(**kwargs)
+                    if self._mb.connect():
+                        log.info(f"RS485 HAT terhubung (tanpa RTS) — port: {port}")
+                        self._port_ok = True
+                        return
+                except Exception as e2:
+                    log.error(f"RS485 HAT fallback gagal: {e2}")
+            log.error(f"{mode_label} init error: {e}")
+            self._on_error(f"[RS485] Gagal inisialisasi port {port}: {e}")
+            self._mb      = None
+            self._port_ok = False
+
+    def _build_rhr(self) -> None:
+        """
+        Deteksi keyword slave ID dari signature fungsi — tanpa test call ke device.
+        Urutan kandidat mencakup semua versi pymodbus yang diketahui:
+          2.x   → 'unit'
+          3.0+  → 'slave'
+          3.12+ → 'device_id'
+        """
+        try:
+            params = list(inspect.signature(
+                self._mb.read_holding_registers).parameters.keys())
+            log.info(f"rhr params: {params}")
+        except Exception:
+            params = []
+
+        # Cari keyword yang cocok — gunakan inspeksi saja, tanpa test call
+        for kw in ("device_id", "slave", "unit", "dev_id"):
+            if kw in params:
+                self._rhr_call = lambda a, c, s, k=kw: \
+                    self._mb.read_holding_registers(a, count=c, **{k: s})
+                log.info(f"pymodbus rhr: pakai keyword '{kw}'")
+                return
+
+        # Tidak ada keyword dikenal — coba pakai inspect untuk cari semua params
+        # dan pilih parameter ke-3 (setelah self, address)
+        slave_param = None
+        for i, name in enumerate(params):
+            if name not in ("self", "address", "count",
+                            "no_response_expected"):
+                slave_param = name
+                break
+
+        if slave_param:
+            self._rhr_call = lambda a, c, s, k=slave_param: \
+                self._mb.read_holding_registers(a, count=c, **{k: s})
+            log.info(f"pymodbus rhr: auto-detect keyword '{slave_param}'")
+            return
+
+        # Fallback akhir: tanpa slave kwarg
+        log.warning("pymodbus rhr: tidak ada slave kwarg, device_id diabaikan")
+        self._rhr_call = lambda a, c, s: \
+            self._mb.read_holding_registers(a, count=c)
+
+    def _rhr(self, address: int, count: int, slave_id: int):
+        """read_holding_registers kompatibel semua versi pymodbus."""
+        if not hasattr(self, "_rhr_call"):
+            self._build_rhr()
+        return self._rhr_call(address, count, slave_id)
+
+    def reconnect(self) -> bool:
+        """Tutup dan buka ulang koneksi. Dipanggil dari tombol GUI."""
+        if self._mb:
+            try:
+                self._mb.close()
+            except Exception:
+                pass
+            self._mb = None
+        self._port_ok = False
+        self._connect()
+        return self._port_ok
+
+    # ── Floating per-sensor ───────────────────────────────────────────────────
+    def _is_float(self, sensor: str) -> bool:
+        """
+        True bila sensor ini disetel floating (simulasi) — entah karena
+        Floating Mode global aktif, atau flag float_<sensor> di-set.
+        Saat True, pembacaan mengembalikan nilai simulasi meski RS485 aktif.
+        """
+        return bool(self.cfg.get("simulate_sensors") or
+                    self.cfg.get(f"float_{sensor}", False))
+
+    # ── Nilai simulasi per-sensor (range sama dengan _simulate() di app.py) ───
+    def _sim_ph(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_ph_min", 7.5),
+                                    c.get("sim_ph_max", 7.6)), 2)
+
+    def _sim_tss(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_tss_min", 80.0),
+                                    c.get("sim_tss_max", 90.0)), 2)
+
+    def _sim_debit(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_debit_min", 0.01),
+                                    c.get("sim_debit_max", 0.10)), 2)
+
+    def _sim_dust(self) -> tuple:
+        c = self.cfg
+        tsp = round(random.uniform(c.get("sim_tsp_min", 30.0),
+                                   c.get("sim_tsp_max", 200.0)), 1)
+        pm25, pm10 = self._calc_pm_from_tsp(tsp)
+        return pm25, pm10, tsp
+
+    def _sim_noise(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_noise_min", 40.0),
+                                    c.get("sim_noise_max", 80.0)), 1)
+
+    def _sim_temp(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_temp_min", 25.0),
+                                    c.get("sim_temp_max", 30.0)), 1)
+
+    def _sim_weather(self) -> tuple:
+        c = self.cfg
+        return (
+            round(random.uniform(c.get("sim_wind_speed_min", 0.0),
+                                 c.get("sim_wind_speed_max", 5.0)), 2),
+            round(random.uniform(c.get("sim_wind_dir_min", 0),
+                                 c.get("sim_wind_dir_max", 359))),
+            round(random.uniform(c.get("sim_air_temp_min", 25.0),
+                                 c.get("sim_air_temp_max", 35.0)), 1),
+            round(random.uniform(c.get("sim_humidity_min", 60.0),
+                                 c.get("sim_humidity_max", 90.0)), 1),
+            round(random.uniform(c.get("sim_pressure_min", 1000.0),
+                                 c.get("sim_pressure_max", 1015.0)), 1),
+        )
+
+    # ── pH ────────────────────────────────────────────────────────────────────
+    def _read_ph(self) -> float:
+        """Slave ID 2, holding register 0-1. Nilai = reg[1] / 100."""
+        if self._is_float("ph") or self._mb is None:
+            return self._sim_ph()
+        try:
+            r = self._rhr(0, 2, self.cfg["slave_id_ph"])
+            if not r.isError():
+                raw = r.registers[1] / 100.0
+                return min(round(raw + self.cfg["offset_ph"], 2), 14.0)
+            else:
+                msg = f"[SENSOR] pH isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca pH gagal: {e}")
+            self._on_error(f"[SENSOR] Baca pH gagal: {e}")
+        return 0.0
+
+    # ── TSS ───────────────────────────────────────────────────────────────────
+    def _read_tss(self) -> float:
+        """Slave ID 10, holding register 0-4. Float format CDAB: reg[3]<<16 | reg[2]."""
+        if self._is_float("tss") or self._mb is None:
+            return self._sim_tss()
+        try:
+            r = self._rhr(0, 5, self.cfg["slave_id_tss"])
+            if not r.isError():
+                combined = (r.registers[3] << 16) | r.registers[2]
+                tss = struct.unpack("f", struct.pack("I", combined))[0]
+                return round(tss - self.cfg["offset_tss"], 3)
+            else:
+                msg = f"[SENSOR] TSS isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca TSS gagal: {e}")
+            self._on_error(f"[SENSOR] Baca TSS gagal: {e}")
+        return 0.0
+
+    # ── Debit ─────────────────────────────────────────────────────────────────
+    def _read_debit(self) -> float:
+        """
+        Slave ID 1, holding register 0-29. Double ABCD dari reg[15-18].
+        Datasheet flowmeter mengeluarkan nilai dalam m³/jam → dikonversi ke
+        m³/menit (÷60) agar sesuai satuan yang ditampilkan di GUI.
+        """
+        if self._is_float("debit") or self._mb is None:
+            return self._sim_debit()
+        try:
+            r = self._rhr(0, 30, self.cfg["slave_id_debit"])
+            if not r.isError():
+                a, b, c, d = (r.registers[15], r.registers[16],
+                              r.registers[17], r.registers[18])
+                combined = (a << 48) | (b << 32) | (c << 16) | d
+                debit_m3h = struct.unpack("d", struct.pack("Q", combined))[0]
+                debit = debit_m3h / 60.0   # m³/jam → m³/menit (sesuai GUI)
+                return round(debit - self.cfg["offset_debit"], 4)
+            else:
+                msg = f"[SENSOR] Debit isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca Debit gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Debit gagal: {e}")
+        return 0.0
+
+    # ── Debu (RK300-02) ───────────────────────────────────────────────────────
+    def _calc_pm_from_tsp(self, pm100: float) -> tuple:
+        """
+        Hitung PM2.5 dan PM10 dari nilai TSP (PM100).
+        Faktor dipilih acak dalam rentang yang dikonfigurasi setiap pembacaan:
+          PM2.5 = random(pm25_factor_min, pm25_factor_max) × TSP
+          PM10  = random(pm10_factor_min, pm10_factor_max) × TSP
+        """
+        f25  = random.uniform(self.cfg.get("pm25_factor_min", 0.1),
+                              self.cfg.get("pm25_factor_max", 0.2))
+        f10  = random.uniform(self.cfg.get("pm10_factor_min", 0.3),
+                              self.cfg.get("pm10_factor_max", 0.4))
+        pm25 = round(f25 * pm100, 1)
+        pm10 = round(f10 * pm100, 1)
+        return pm25, pm10
+
+    def _read_dust(self) -> tuple:
+        """
+        Slave ID = slave_id_dust (default 3).
+        Register 0x0001, count 3:
+          reg[0] = PM2.5  (tidak dipakai — dihitung dari TSP)
+          reg[1] = PM10   (tidak dipakai — dihitung dari TSP)
+          reg[2] = PM100/TSP (ug/m³) — nilai utama
+
+        PM2.5 = pm25_factor × TSP
+        PM10  = pm10_factor × TSP
+        """
+        if self._is_float("dust") or self._mb is None:
+            return self._sim_dust()
+        try:
+            r = self._rhr(1, 3, self.cfg["slave_id_dust"])
+            if not r.isError():
+                pm100 = round(r.registers[1] + self.cfg["offset_pm100"], 1)
+                pm25, pm10 = self._calc_pm_from_tsp(pm100)
+                return pm25, pm10, pm100
+            else:
+                msg = f"[SENSOR] Debu isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca Debu gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Debu gagal: {e}")
+        return (0.0, 0.0, 0.0)
+
+    # ── Noise (Sound Level Meter) ─────────────────────────────────────────────
+    def _read_noise(self) -> float:
+        """
+        Slave ID = slave_id_noise (default 4).
+        Register address=0, count=1:
+          reg[0] / 10 = noise level (dB)
+        """
+        if self._is_float("noise") or self._mb is None:
+            return self._sim_noise()
+        try:
+            r = self._rhr(0, 1, self.cfg["slave_id_noise"])
+            if not r.isError():
+                raw   = r.registers[0]
+                noise = round(raw / 10 + self.cfg.get("offset_noise", 0.0), 1)
+                return noise
+            else:
+                msg = f"[SENSOR] Noise isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca Noise gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Noise gagal: {e}")
+        return 0.0
+
+    def read_noise_safe(self) -> float:
+        """Baca noise dengan lock — aman dipanggil dari thread terpisah."""
+        with self._lock:
+            return self._read_noise()
+
+    def read_dust_safe(self) -> tuple:
+        """Baca debu (pm25, pm10, tsp) dengan lock — aman dari thread terpisah."""
+        with self._lock:
+            return self._read_dust()
+
+    # ── YGC-CSM MINI Ultrasonic Environmental Monitoring ─────────────────────
+    @staticmethod
+    def _to_signed16(val: int) -> int:
+        return val - 0x10000 if val >= 0x8000 else val
+
+    def _read_weather(self) -> tuple:
+        """
+        YGC-CSM: baca 13 register mulai 0x0000 sesuai datasheet.
+        Returns (wind_speed, wind_dir, air_temp, humidity, pressure).
+        Register layout (index dari reg[0]):
+          [0]  0x0000 — suhu udara   (signed, ÷10 = °C)
+          [1]  0x0001 — kelembaban   (signed, ÷10 = %RH)
+          [6]  0x0006 — tekanan      (signed, ÷10 = hPa)
+          [11] 0x000B — kec. angin   (unsigned, ÷100 = m/s)
+          [12] 0x000C — arah angin   (signed, 1° resolusi)
+        0x7FFF = tidak terhubung/invalid → kembalikan 0.0.
+        """
+        if self._is_float("weather") or self._mb is None:
+            return self._sim_weather()
+        try:
+            r = self._rhr(0x0000, 13, self.cfg["slave_id_weather"])
+            if r.isError():
+                msg = f"[SENSOR] Weather isError: {r}"
+                log.error(msg); self._on_error(msg)
+                return (0.0, 0, 0.0, 0.0, 0.0)
+
+            regs = r.registers
+
+            def _get(idx, scale, signed=True):
+                v = regs[idx]
+                if v == 0x7FFF:
+                    return None
+                return (self._to_signed16(v) if signed else v) * scale
+
+            ws  = _get(11, 0.01, signed=False)  # wind speed  (unsigned)
+            wd  = _get(12, 1.0)                  # wind dir    (signed)
+            at  = _get(0,  0.1)                  # air temp    (signed)
+            rh  = _get(1,  0.1)                  # humidity    (signed)
+            pr  = _get(6,  0.1)                  # pressure    (signed)
+
+            wind_speed = round((ws or 0.0) + self.cfg.get("offset_wind_speed", 0.0), 2)
+            wind_dir   = round(wd or 0.0)
+            air_temp   = round((at or 0.0) + self.cfg.get("offset_air_temp",   0.0), 1)
+            humidity   = round((rh or 0.0) + self.cfg.get("offset_humidity",   0.0), 1)
+            pressure   = round((pr or 0.0) + self.cfg.get("offset_pressure",   0.0), 1)
+            return (wind_speed, wind_dir, air_temp, humidity, pressure)
+        except Exception as e:
+            log.error(f"Baca Weather gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Weather gagal: {e}")
+            return (0.0, 0, 0.0, 0.0, 0.0)
+
+    def read_weather_safe(self) -> tuple:
+        """Baca cuaca (wind_speed, wind_dir, air_temp, humidity, pressure) dengan lock."""
+        with self._lock:
+            return self._read_weather()
+
+    # ── Suhu air ──────────────────────────────────────────────────────────────
+    def _read_temp(self) -> float:
+        """
+        Slave ID = slave_id_temp (default 5).
+        Register address=0, count=1:
+          reg[0] / 10 = suhu (°C)
+        """
+        if self._is_float("temp") or self._mb is None:
+            return self._sim_temp()
+        try:
+            r = self._rhr(0, 1, self.cfg["slave_id_temp"])
+            if not r.isError():
+                raw  = r.registers[0]
+                temp = round(raw / 10 + self.cfg.get("offset_temp", 0.0), 1)
+                return temp
+            else:
+                msg = f"[SENSOR] Temp isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca Temp gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Temp gagal: {e}")
+        return 0.0
+
+    # ── Baca semua sensor ─────────────────────────────────────────────────────
+    def read_all(self) -> SensorReading:
+        reading = SensorReading(timestamp=time.time())
+        with self._lock:
+            if self.cfg.get("sensor_ph_enabled", True):
+                reading.ph    = self._read_ph()
+                time.sleep(0.1)
+            if self.cfg.get("sensor_tss_enabled", True):
+                reading.tss   = self._read_tss()
+                time.sleep(0.1)
+            if self.cfg.get("sensor_debit_enabled", True):
+                reading.debit = self._read_debit()
+                time.sleep(0.1)
+            if self.cfg.get("sensor_dust_enabled", True):
+                reading.pm25, reading.pm10, reading.pm100 = self._read_dust()
+            if self.cfg.get("sensor_temp_enabled", True):
+                reading.temp  = self._read_temp()
+            if self.cfg.get("sensor_weather_enabled", True):
+                (reading.wind_speed, reading.wind_dir,
+                 reading.air_temp, reading.humidity,
+                 reading.pressure) = self._read_weather()
+            # noise tidak dibaca di sini — dihandle oleh _noise_loop di app.py
+        return reading
+
+    def close(self) -> None:
+        if self._mb:
+            self._mb.close()
