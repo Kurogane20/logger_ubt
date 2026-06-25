@@ -12,6 +12,8 @@ class SensorReading:
     ph:         float = 0.0   # pH (0–14)
     tss:        float = 0.0   # Total Suspended Solid (mg/L)
     debit:      float = 0.0   # Debit aliran (m³/menit)
+    cod:        float = 0.0   # Chemical Oxygen Demand (mg/L)
+    nh3n:       float = 0.0   # Amonia nitrogen NH3-N (mg/L)
     pm25:       float = 0.0   # PM2.5 konsentrasi debu (ug/m³)
     pm10:       float = 0.0   # PM10  konsentrasi debu (ug/m³)
     pm100:      float = 0.0   # PM100 konsentrasi debu (ug/m³)
