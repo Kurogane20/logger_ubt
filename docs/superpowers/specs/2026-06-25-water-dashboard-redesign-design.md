@@ -130,7 +130,7 @@ COD `#6A1B9A`, TSS `#0091D5`, NH3-N `#00838F`, Debit `#00897B`.
 
 ## 10. Info Perangkat (helper baru)
 
-Modul kecil (mis. `device_info.py`) atau fungsi di `sysmon.py`:
+Modul baru `device_info.py`:
 - `get_serial()`: Linux baca `/proc/cpuinfo` (field Serial) atau
   `/sys/firmware/devicetree/base/serial-number`; fallback ke config `device_serial`
   atau `"—"`.
