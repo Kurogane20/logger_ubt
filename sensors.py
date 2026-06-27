@@ -321,10 +321,13 @@ class SensorReader:
             r = self._rhr(addr, count, self.cfg[slave_key])
             if not r.isError():
                 idx = self.cfg[index_key]
+                # offset bersifat aditif (kalibrasi), konsisten dengan _read_ph
                 val = r.registers[idx] / self.cfg[scale_key]
                 return round(val + self.cfg.get(offset_key, 0.0), 3)
-            msg = f"[SENSOR] {sensor} isError: {r}"
-            log.error(msg); self._on_error(msg)
+            else:
+                msg = f"[SENSOR] {sensor} isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
         except Exception as e:
             log.error(f"Baca {sensor} gagal: {e}")
             self._on_error(f"[SENSOR] Baca {sensor} gagal: {e}")
