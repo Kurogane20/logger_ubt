@@ -344,10 +344,26 @@ class SparingGUI:
                 slot += 1
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # LOG PANEL — stub (replaced in next task)
+    # LOG PANEL
     # ═══════════════════════════════════════════════════════════════════════════
     def _build_log_panel(self, parent) -> None:
-        pass  # replaced in next task (log panel UI)
+        _, outer = self._rounded_canvas(parent, C["card"], radius=self._sp(12),
+                                        fill="x", pady=(self._sp(8), 0))
+        bar = tk.Frame(outer, bg=C["card"]); bar.pack(fill="x")
+        tk.Label(bar, text="LOG PENGIRIMAN", bg=C["card"], fg=C["accent"],
+                 font=(_FONT_UI, self._fs(8), "bold"),
+                 padx=self._sp(10), pady=self._sp(5)).pack(side="left")
+        self._data_ok = tk.Label(bar, text="● Data OK", bg=C["card"],
+                                  fg=C["online"], font=(_FONT_UI, self._fs(8), "bold"))
+        self._data_ok.pack(side="right", padx=self._sp(8))
+        frame = tk.Frame(outer, bg=C["log_bg"]); frame.pack(fill="both")
+        sb = ttk.Scrollbar(frame, orient="vertical")
+        self._log_txt = tk.Text(frame, state="disabled", height=self._sp(6),
+                                font=(_FONT_MONO, self._fs(8)), bg=C["log_bg"],
+                                fg=C["log_fg"], relief="flat", padx=10, pady=8,
+                                wrap="word", yscrollcommand=sb.set)
+        sb.configure(command=self._log_txt.yview)
+        sb.pack(side="right", fill="y"); self._log_txt.pack(side="left", fill="both", expand=True)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # SIDEBAR — clock, device info, mode regulasi, logger toggles, status
@@ -679,15 +695,341 @@ class SparingGUI:
         pass  # gap button added in a later task
 
     def log(self, msg: str) -> None:
-        # minimal: echo to footer; full text-widget version added next task
+        line = f"[{datetime.now():%H:%M:%S}] {msg}\n"
+        if hasattr(self, "_log_txt"):
+            self._log_txt.configure(state="normal")
+            self._log_txt.insert("end", line)
+            self._log_txt.see("end")
+            self._log_txt.configure(state="disabled")
         if hasattr(self, "_statusbar_var"):
             self._statusbar_var.set(str(msg)[:80])
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # DIALOG STUBS (replaced in a later task)
+    # DIALOGS
     # ═══════════════════════════════════════════════════════════════════════════
+
     def _open_sensor_select(self) -> None:
-        pass  # implemented in next task
+        """Dialog pilih sensor aktif — 6 parameter air."""
+        w, h = self._sp(440), self._sp(520)
+        win = self._make_dialog(w, h, "Pilihan Sensor")
+        win.configure(bg=C["panel"])
+
+        sensors = [
+            ("sensor_temp_enabled",  "Suhu Air (°C)",     C["s_suhu"], "#FFCC80"),
+            ("sensor_ph_enabled",    "pH",                C["s_ph"],   "#A8CCFF"),
+            ("sensor_cod_enabled",   "COD (mg/L)",        C["s_cod"],  "#CE93D8"),
+            ("sensor_tss_enabled",   "TSS (mg/L)",        C["s_tss"],  "#A0D8F0"),
+            ("sensor_nh3n_enabled",  "NH3-N (mg/L)",      C["s_nh3n"], "#80DEEA"),
+            ("sensor_debit_enabled", "Debit (m³/menit)",  C["s_debit"],"#9AECD8"),
+        ]
+
+        check_vars = {}
+
+        def _apply():
+            for cfg_key, var in check_vars.items():
+                self.cfg[cfg_key] = var.get()
+            save_config(self.cfg)
+            self.apply_sensor_visibility()
+            active = [lbl for cfg_key, lbl, *_ in sensors
+                      if self.cfg.get(cfg_key, True)]
+            self.log(f"Sensor aktif: {', '.join(active) if active else '(tidak ada)'}")
+            win.destroy()
+
+        # Tombol bar — pack pertama ke bawah agar selalu terlihat
+        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(16), pady=self._sp(10))
+        btn_bar.pack(side="bottom", fill="x")
+        self._flat_btn(btn_bar, "✓  Terapkan",
+                       _apply, C["primary"], "white",
+                       pady=7).pack(side="left", padx=(0, self._sp(8)),
+                                    ipadx=self._sp(10))
+        self._flat_btn(btn_bar, "✕  Batal",
+                       win.destroy, C["bg"], C["text_muted"],
+                       pady=7).pack(side="left", ipadx=self._sp(10))
+
+        # Header
+        tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
+        tk.Label(win, text="PILIH SENSOR AKTIF",
+                 bg=C["panel"], fg=C["text"],
+                 font=(_FONT_UI, self._fs(12), "bold"),
+                 padx=self._sp(16), pady=self._sp(12)).pack(anchor="w")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        tk.Label(win,
+                 text="Sensor yang dinonaktifkan tidak akan\nditampilkan dan tidak dikirim ke server.",
+                 bg=C["panel"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8)),
+                 justify="left").pack(anchor="w",
+                                      padx=self._sp(16), pady=(self._sp(10), self._sp(4)))
+
+        # Daftar sensor — satu baris per sensor
+        for cfg_key, label, swatch, _lc in sensors:
+            var = tk.BooleanVar(value=self.cfg.get(cfg_key, True))
+            check_vars[cfg_key] = var
+
+            row = tk.Frame(win, bg=C["panel"],
+                           pady=self._sp(6), padx=self._sp(16))
+            row.pack(fill="x")
+
+            tk.Frame(row, bg=swatch,
+                     width=self._sp(10), height=self._sp(10)).pack(
+                side="left", padx=(0, self._sp(10)))
+
+            # Custom toggle label (on/off visual)
+            _lbl = tk.Label(
+                row,
+                text="✓" if var.get() else "",
+                bg=C["primary"] if var.get() else C["border"],
+                fg="white",
+                font=(_FONT_UI, self._fs(10), "bold"),
+                width=2,
+                padx=self._sp(3),
+                pady=self._sp(3),
+                cursor="hand2",
+            )
+            _lbl.pack(side="right", padx=(self._sp(6), 0))
+
+            def _bind_toggle(_v=var, _l=_lbl):
+                def _tog(e=None):
+                    _v.set(not _v.get())
+                    _l.config(text="✓" if _v.get() else "",
+                              bg=C["primary"] if _v.get() else C["border"])
+                _l.bind("<Button-1>", _tog)
+            _bind_toggle()
+
+            tk.Checkbutton(row, text=label, variable=var,
+                           bg=C["panel"], fg=C["text"],
+                           activebackground=C["panel"],
+                           font=(_FONT_UI, self._fs(10)),
+                           selectcolor=C["card_alt"],
+                           command=lambda _v=var, _l=_lbl: _l.config(
+                               text="✓" if _v.get() else "",
+                               bg=C["primary"] if _v.get() else C["border"])
+                           ).pack(side="left", expand=True, anchor="w")
+
+            tk.Frame(win, bg=C["border"], height=1).pack(
+                fill="x", padx=self._sp(16))
+
+    def _open_float_select(self) -> None:
+        """Dialog atur floating per sensor — sensor ON = data simulasi meski RS485 aktif."""
+        w, h = self._sp(440), self._sp(480)
+        win = self._make_dialog(w, h, "Floating per Sensor")
+        win.configure(bg=C["panel"])
+
+        sensors = [
+            ("float_temp",  "Suhu Air"),
+            ("float_ph",    "pH"),
+            ("float_cod",   "COD"),
+            ("float_tss",   "TSS"),
+            ("float_nh3n",  "NH3-N"),
+            ("float_debit", "Debit"),
+        ]
+
+        check_vars = {}
+
+        def _apply():
+            for key, var in check_vars.items():
+                self.cfg[key] = var.get()
+            save_config(self.cfg)
+            names = [lbl for key, lbl in sensors if self.cfg.get(key, False)]
+            self.log(f"Floating per sensor: "
+                     f"{', '.join(names) if names else '(tidak ada — semua hardware)'}")
+            win.destroy()
+
+        # Tombol bar — pack pertama ke bawah
+        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(16), pady=self._sp(10))
+        btn_bar.pack(side="bottom", fill="x")
+        self._flat_btn(btn_bar, "✓  Terapkan",
+                       _apply, C["primary"], "white",
+                       pady=7).pack(side="left", padx=(0, self._sp(8)),
+                                    ipadx=self._sp(10))
+        self._flat_btn(btn_bar, "✕  Batal",
+                       win.destroy, C["bg"], C["text_muted"],
+                       pady=7).pack(side="left", ipadx=self._sp(10))
+
+        # Header
+        tk.Frame(win, bg="#F57F17", height=self._sp(4)).pack(fill="x")
+        tk.Label(win, text="FLOATING PER SENSOR",
+                 bg=C["panel"], fg=C["text"],
+                 font=(_FONT_UI, self._fs(12), "bold"),
+                 padx=self._sp(16), pady=self._sp(12)).pack(anchor="w")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        info = ("Sensor AKTIF = data SIMULASI meski RS485 terhubung.\n"
+                "Sensor nonaktif = baca dari hardware secara langsung.")
+        tk.Label(win, text=info,
+                 bg=C["panel"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8)),
+                 justify="left").pack(anchor="w",
+                                      padx=self._sp(16), pady=(self._sp(10), self._sp(4)))
+
+        # Daftar sensor
+        for key, label in sensors:
+            var = tk.BooleanVar(value=self.cfg.get(key, False))
+            check_vars[key] = var
+
+            row = tk.Frame(win, bg=C["panel"],
+                           pady=self._sp(6), padx=self._sp(16))
+            row.pack(fill="x")
+
+            tk.Checkbutton(row, text=label, variable=var,
+                           bg=C["panel"], fg=C["text"],
+                           activebackground=C["panel"],
+                           font=(_FONT_UI, self._fs(10)),
+                           selectcolor=C["card_alt"]
+                           ).pack(side="left", anchor="w")
+
+            tk.Frame(win, bg=C["border"], height=1).pack(
+                fill="x", padx=self._sp(16))
+
+    def _reconnect_rs485(self) -> None:
+        import threading
+        self.log("Menghubungkan ulang RS485...")
+        self.update_connection("rs485", False)
+
+        def _do():
+            ok = self.app.sensor_rdr.reconnect() if self.app.sensor_rdr else False
+            port = self.cfg.get("serial_port", "—")
+            self.root.after(0, self.update_connection, "rs485", ok)
+            self.root.after(0, self.log, f"RS485 {'terhubung' if ok else 'GAGAL'} — {port}")
+
+        threading.Thread(target=_do, daemon=True, name="reconnect").start()
+
+    def _scan_ports_dialog(self) -> None:
+        """Dialog pilih port serial USB RS485."""
+        win = self._make_dialog(self._sp(460), self._sp(360), "Scan Port USB RS485")
+        win.configure(bg=C["bg"])
+
+        tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
+
+        title_bar = tk.Frame(win, bg=C["panel"])
+        title_bar.pack(fill="x")
+        tk.Label(title_bar, text="PORT SERIAL TERSEDIA",
+                 bg=C["panel"], fg=C["text"],
+                 font=(_FONT_UI, self._fs(11), "bold"),
+                 padx=self._sp(16), pady=self._sp(10)).pack(side="left")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        body = tk.Frame(win, bg=C["bg"], padx=self._sp(16), pady=self._sp(12))
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body, text="Pilih port USB RS485 Anda:",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9), "bold")).pack(
+            anchor="w", pady=(0, self._sp(6)))
+
+        list_frame = tk.Frame(body, bg=C["shadow"], padx=1, pady=1)
+        list_frame.pack(fill="both", expand=True)
+
+        listbox = tk.Listbox(
+            list_frame,
+            font=(_FONT_MONO, self._fs(11)),
+            bg=C["card"], fg=C["text"],
+            selectbackground=C["primary"],
+            selectforeground="white",
+            relief="flat", bd=0, height=7,
+            activestyle="none",
+        )
+        listbox.pack(fill="both", expand=True)
+
+        info_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=info_var,
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8))).pack(
+            anchor="w", pady=(self._sp(6), 0))
+
+        def _refresh():
+            listbox.delete(0, "end")
+            ports = scan_serial_ports()
+            detail = {}
+            if HAS_SERIAL_TOOLS and list_ports is not None:
+                detail = {p.device: p.description for p in list_ports.comports()}
+            for p in ports:
+                listbox.insert("end", f"  {p}   {detail.get(p, '')}")
+            if not ports:
+                listbox.insert("end", "  (tidak ada port terdeteksi)")
+            info_var.set(f"{len(ports)} port ditemukan")
+
+        def _apply():
+            sel = listbox.curselection()
+            if not sel:
+                return
+            port = listbox.get(sel[0]).strip().split()[0]
+            self.cfg["serial_port"] = port
+            save_config(self.cfg)
+            self.log(f"Port diubah ke: {port}")
+            win.destroy()
+            self._reconnect_rs485()
+
+        _refresh()
+
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(12), pady=self._sp(8))
+        btn_bar.pack(fill="x")
+
+        for text, cmd, bg, fg in [
+            ("↻  Refresh",          _refresh,    C["bg"],      C["primary"]),
+            ("✓  Gunakan Port Ini", _apply,      C["primary"], "white"),
+            ("✕  Tutup",            win.destroy, C["bg"],      C["text_muted"]),
+        ]:
+            self._flat_btn(btn_bar, text, cmd, bg, fg,
+                           pady=6).pack(side="left", padx=(0, self._sp(6)))
 
     def _open_settings(self) -> None:
-        pass  # implemented in next task
+        """Dialog pengaturan koneksi RS485 dan port."""
+        w, h = self._sp(400), self._sp(300)
+        win = self._make_dialog(w, h, "Pengaturan")
+        win.configure(bg=C["bg"])
+
+        # Header stripe
+        tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
+        title_bar = tk.Frame(win, bg=C["panel"])
+        title_bar.pack(fill="x")
+        tk.Label(title_bar, text="PENGATURAN KONEKSI",
+                 bg=C["panel"], fg=C["text"],
+                 font=(_FONT_UI, self._fs(12), "bold"),
+                 padx=self._sp(16), pady=self._sp(10)).pack(side="left")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        body = tk.Frame(win, bg=C["bg"], padx=self._sp(20), pady=self._sp(16))
+        body.pack(fill="both", expand=True)
+
+        # Port info row
+        port_row = tk.Frame(body, bg=C["bg"])
+        port_row.pack(fill="x", pady=(0, self._sp(8)))
+        tk.Label(port_row, text="Port aktif:",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9))).pack(side="left")
+        tk.Label(port_row,
+                 text=self.cfg.get("serial_port", "—"),
+                 bg=C["bg"], fg=C["text"],
+                 font=(_FONT_MONO, self._fs(9), "bold")).pack(side="left",
+                                                                padx=(self._sp(8), 0))
+
+        tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=(0, self._sp(12)))
+
+        # Action buttons — stacked
+        def _reconnect_and_close():
+            win.destroy()
+            self._reconnect_rs485()
+
+        for text, cmd, bg, fg in [
+            ("↻  Hubungkan Ulang",       _reconnect_and_close,      C["primary"], "white"),
+            ("⌕  Scan Port",             self._scan_ports_dialog,   C["bg"],      C["primary"]),
+            ("⚗  Floating per Sensor",   self._open_float_select,   C["bg"],      C["text_muted"]),
+        ]:
+            self._flat_btn(body, text, cmd, bg, fg,
+                           pady=8, border=(bg == C["bg"])).pack(
+                fill="x", pady=self._sp(4))
+
+        # Close button
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(16), pady=self._sp(8))
+        btn_bar.pack(fill="x")
+        self._flat_btn(btn_bar, "✕  Tutup", win.destroy,
+                       C["bg"], C["text_muted"], pady=6).pack(side="right")
