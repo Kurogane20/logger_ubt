@@ -210,37 +210,10 @@ class SensorReader:
         return round(random.uniform(c.get("sim_nh3n_min", 0.5),
                                     c.get("sim_nh3n_max", 2.0)), 2)
 
-    def _sim_dust(self) -> tuple:
-        c = self.cfg
-        tsp = round(random.uniform(c.get("sim_tsp_min", 30.0),
-                                   c.get("sim_tsp_max", 200.0)), 1)
-        pm25, pm10 = self._calc_pm_from_tsp(tsp)
-        return pm25, pm10, tsp
-
-    def _sim_noise(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_noise_min", 40.0),
-                                    c.get("sim_noise_max", 80.0)), 1)
-
     def _sim_temp(self) -> float:
         c = self.cfg
         return round(random.uniform(c.get("sim_temp_min", 25.0),
                                     c.get("sim_temp_max", 30.0)), 1)
-
-    def _sim_weather(self) -> tuple:
-        c = self.cfg
-        return (
-            round(random.uniform(c.get("sim_wind_speed_min", 0.0),
-                                 c.get("sim_wind_speed_max", 5.0)), 2),
-            round(random.uniform(c.get("sim_wind_dir_min", 0),
-                                 c.get("sim_wind_dir_max", 359))),
-            round(random.uniform(c.get("sim_air_temp_min", 25.0),
-                                 c.get("sim_air_temp_max", 35.0)), 1),
-            round(random.uniform(c.get("sim_humidity_min", 60.0),
-                                 c.get("sim_humidity_max", 90.0)), 1),
-            round(random.uniform(c.get("sim_pressure_min", 1000.0),
-                                 c.get("sim_pressure_max", 1015.0)), 1),
-        )
 
     # ── pH ────────────────────────────────────────────────────────────────────
     def _read_ph(self) -> float:
@@ -343,140 +316,6 @@ class SensorReader:
             "nh3n", "slave_id_nh3n", "reg_addr_nh3n", "reg_count_nh3n",
             "reg_index_nh3n", "scale_nh3n", "offset_nh3n", self._sim_nh3n)
 
-    # ── Debu (RK300-02) ───────────────────────────────────────────────────────
-    def _calc_pm_from_tsp(self, pm100: float) -> tuple:
-        """
-        Hitung PM2.5 dan PM10 dari nilai TSP (PM100).
-        Faktor dipilih acak dalam rentang yang dikonfigurasi setiap pembacaan:
-          PM2.5 = random(pm25_factor_min, pm25_factor_max) × TSP
-          PM10  = random(pm10_factor_min, pm10_factor_max) × TSP
-        """
-        f25  = random.uniform(self.cfg.get("pm25_factor_min", 0.1),
-                              self.cfg.get("pm25_factor_max", 0.2))
-        f10  = random.uniform(self.cfg.get("pm10_factor_min", 0.3),
-                              self.cfg.get("pm10_factor_max", 0.4))
-        pm25 = round(f25 * pm100, 1)
-        pm10 = round(f10 * pm100, 1)
-        return pm25, pm10
-
-    def _read_dust(self) -> tuple:
-        """
-        Slave ID = slave_id_dust (default 3).
-        Register 0x0001, count 3:
-          reg[0] = PM2.5  (tidak dipakai — dihitung dari TSP)
-          reg[1] = PM10   (tidak dipakai — dihitung dari TSP)
-          reg[2] = PM100/TSP (ug/m³) — nilai utama
-
-        PM2.5 = pm25_factor × TSP
-        PM10  = pm10_factor × TSP
-        """
-        if self._is_float("dust") or self._mb is None:
-            return self._sim_dust()
-        try:
-            r = self._rhr(1, 3, self.cfg["slave_id_dust"])
-            if not r.isError():
-                pm100 = round(r.registers[1] + self.cfg["offset_pm100"], 1)
-                pm25, pm10 = self._calc_pm_from_tsp(pm100)
-                return pm25, pm10, pm100
-            else:
-                msg = f"[SENSOR] Debu isError: {r}"
-                log.error(msg)
-                self._on_error(msg)
-        except Exception as e:
-            log.error(f"Baca Debu gagal: {e}")
-            self._on_error(f"[SENSOR] Baca Debu gagal: {e}")
-        return (0.0, 0.0, 0.0)
-
-    # ── Noise (Sound Level Meter) ─────────────────────────────────────────────
-    def _read_noise(self) -> float:
-        """
-        Slave ID = slave_id_noise (default 4).
-        Register address=0, count=1:
-          reg[0] / 10 = noise level (dB)
-        """
-        if self._is_float("noise") or self._mb is None:
-            return self._sim_noise()
-        try:
-            r = self._rhr(0, 1, self.cfg["slave_id_noise"])
-            if not r.isError():
-                raw   = r.registers[0]
-                noise = round(raw / 10 + self.cfg.get("offset_noise", 0.0), 1)
-                return noise
-            else:
-                msg = f"[SENSOR] Noise isError: {r}"
-                log.error(msg)
-                self._on_error(msg)
-        except Exception as e:
-            log.error(f"Baca Noise gagal: {e}")
-            self._on_error(f"[SENSOR] Baca Noise gagal: {e}")
-        return 0.0
-
-    def read_noise_safe(self) -> float:
-        """Baca noise dengan lock — aman dipanggil dari thread terpisah."""
-        with self._lock:
-            return self._read_noise()
-
-    def read_dust_safe(self) -> tuple:
-        """Baca debu (pm25, pm10, tsp) dengan lock — aman dari thread terpisah."""
-        with self._lock:
-            return self._read_dust()
-
-    # ── YGC-CSM MINI Ultrasonic Environmental Monitoring ─────────────────────
-    @staticmethod
-    def _to_signed16(val: int) -> int:
-        return val - 0x10000 if val >= 0x8000 else val
-
-    def _read_weather(self) -> tuple:
-        """
-        YGC-CSM: baca 13 register mulai 0x0000 sesuai datasheet.
-        Returns (wind_speed, wind_dir, air_temp, humidity, pressure).
-        Register layout (index dari reg[0]):
-          [0]  0x0000 — suhu udara   (signed, ÷10 = °C)
-          [1]  0x0001 — kelembaban   (signed, ÷10 = %RH)
-          [6]  0x0006 — tekanan      (signed, ÷10 = hPa)
-          [11] 0x000B — kec. angin   (unsigned, ÷100 = m/s)
-          [12] 0x000C — arah angin   (signed, 1° resolusi)
-        0x7FFF = tidak terhubung/invalid → kembalikan 0.0.
-        """
-        if self._is_float("weather") or self._mb is None:
-            return self._sim_weather()
-        try:
-            r = self._rhr(0x0000, 13, self.cfg["slave_id_weather"])
-            if r.isError():
-                msg = f"[SENSOR] Weather isError: {r}"
-                log.error(msg); self._on_error(msg)
-                return (0.0, 0, 0.0, 0.0, 0.0)
-
-            regs = r.registers
-
-            def _get(idx, scale, signed=True):
-                v = regs[idx]
-                if v == 0x7FFF:
-                    return None
-                return (self._to_signed16(v) if signed else v) * scale
-
-            ws  = _get(11, 0.01, signed=False)  # wind speed  (unsigned)
-            wd  = _get(12, 1.0)                  # wind dir    (signed)
-            at  = _get(0,  0.1)                  # air temp    (signed)
-            rh  = _get(1,  0.1)                  # humidity    (signed)
-            pr  = _get(6,  0.1)                  # pressure    (signed)
-
-            wind_speed = round((ws or 0.0) + self.cfg.get("offset_wind_speed", 0.0), 2)
-            wind_dir   = round(wd or 0.0)
-            air_temp   = round((at or 0.0) + self.cfg.get("offset_air_temp",   0.0), 1)
-            humidity   = round((rh or 0.0) + self.cfg.get("offset_humidity",   0.0), 1)
-            pressure   = round((pr or 0.0) + self.cfg.get("offset_pressure",   0.0), 1)
-            return (wind_speed, wind_dir, air_temp, humidity, pressure)
-        except Exception as e:
-            log.error(f"Baca Weather gagal: {e}")
-            self._on_error(f"[SENSOR] Baca Weather gagal: {e}")
-            return (0.0, 0, 0.0, 0.0, 0.0)
-
-    def read_weather_safe(self) -> tuple:
-        """Baca cuaca (wind_speed, wind_dir, air_temp, humidity, pressure) dengan lock."""
-        with self._lock:
-            return self._read_weather()
-
     # ── Suhu air ──────────────────────────────────────────────────────────────
     def _read_temp(self) -> float:
         """
@@ -520,15 +359,8 @@ class SensorReader:
             if self.cfg.get("sensor_nh3n_enabled", True):
                 reading.nh3n  = self._read_nh3n()
                 time.sleep(0.1)
-            if self.cfg.get("sensor_dust_enabled", True):
-                reading.pm25, reading.pm10, reading.pm100 = self._read_dust()
             if self.cfg.get("sensor_temp_enabled", True):
                 reading.temp  = self._read_temp()
-            if self.cfg.get("sensor_weather_enabled", True):
-                (reading.wind_speed, reading.wind_dir,
-                 reading.air_temp, reading.humidity,
-                 reading.pressure) = self._read_weather()
-            # noise tidak dibaca di sini — dihandle oleh _noise_loop di app.py
         return reading
 
     def close(self) -> None:
