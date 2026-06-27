@@ -173,6 +173,7 @@ class SparingApp:
                     f"{mode_tag}Data {n}/{batch_size} — "
                     f"pH={r.ph:.2f}  TSS={r.tss:.2f} mg/L  "
                     f"Debit={r.debit:.2f} m³/menit  "
+                    f"COD={r.cod:.2f}  NH3-N={r.nh3n:.2f} mg/L  "
                     f"PM2.5={r.pm25:.1f}  PM10={r.pm10:.1f}  PM100={r.pm100:.1f} ug/m³  "
                     f"Leq={r.noise:.1f} dB  Temp={r.temp:.1f}°C"
                 )
@@ -681,6 +682,10 @@ class SparingApp:
                                               c.get("sim_tss_max",        90.0)),  2),
             debit      = round(random.uniform(c.get("sim_debit_min",      0.01),
                                               c.get("sim_debit_max",      0.10)),  2),
+            cod        = round(random.uniform(c.get("sim_cod_min",  10.0),
+                                              c.get("sim_cod_max",  30.0)), 2),
+            nh3n       = round(random.uniform(c.get("sim_nh3n_min", 0.5),
+                                              c.get("sim_nh3n_max", 2.0)), 2),
             temp       = round(random.uniform(c.get("sim_temp_min",       25.0),
                                               c.get("sim_temp_max",       30.0)),  1),
             pm100      = tsp,
