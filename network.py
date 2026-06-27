@@ -142,23 +142,21 @@ class NetworkManager:
         return round(random.uniform(min(a, b), max(a, b)), 4)
 
     def _apply_limits(self, ph: float, tss: float, debit: float,
-                      pm25: float = 0.0, pm10: float = 0.0,
-                      pm100: float = 0.0, noise: float = 0.0):
-        """Terapkan batas min/max dengan variasi fluktuatif ke semua parameter."""
+                      cod: float = 0.0, nh3n: float = 0.0):
+        """Terapkan batas min/max fluktuatif ke 5 parameter air."""
         c = self.cfg
         def _f(key): return (
             c.get(f"limit_{key}_min"),   c.get(f"limit_{key}_max"),
             c.get(f"limit_{key}_float_lo_min"), c.get(f"limit_{key}_float_lo_max"),
             c.get(f"limit_{key}_float_hi_min"), c.get(f"limit_{key}_float_hi_max"),
         )
-        ph_out    = self._cap_fluctuate(ph,    *_f("ph"))
-        tss_out   = self._cap_fluctuate(tss,   *_f("tss"))
-        debit_out = self._cap_fluctuate(debit, *_f("debit"))
-        pm25_out  = self._cap_fluctuate(pm25,  *_f("pm25"))
-        pm10_out  = self._cap_fluctuate(pm10,  *_f("pm10"))
-        pm100_out = self._cap_fluctuate(pm100, *_f("pm100"))
-        noise_out = self._cap_fluctuate(noise, *_f("noise"))
-        return ph_out, tss_out, debit_out, pm25_out, pm10_out, pm100_out, noise_out
+        return (
+            self._cap_fluctuate(ph,    *_f("ph")),
+            self._cap_fluctuate(tss,   *_f("tss")),
+            self._cap_fluctuate(debit, *_f("debit")),
+            self._cap_fluctuate(cod,   *_f("cod")),
+            self._cap_fluctuate(nh3n,  *_f("nh3n")),
+        )
 
     def _build_row(self, r: SensorReading, processed: bool = False,
                    include_env: bool = True) -> dict:
@@ -168,16 +166,17 @@ class NetworkManager:
         Jika processed=True, terapkan filter min/max.
         include_env=False → tidak sertakan PM dan noise (untuk Server 2 KLHK).
         """
-        row: dict = {"datetime": int(r.timestamp), "cod": 0, "nh3n": 0}
+        row: dict = {"datetime": int(r.timestamp)}
         cfg = self.cfg
 
         if processed:
-            ph, tss, debit, pm25, pm10, pm100, noise = self._apply_limits(
-                r.ph, r.tss, r.debit, r.pm25, r.pm10, r.pm100, r.noise)
+            ph, tss, debit, cod, nh3n = self._apply_limits(
+                r.ph, r.tss, r.debit, r.cod, r.nh3n)
         else:
-            ph, tss, debit = r.ph, r.tss, r.debit
-            pm25, pm10, pm100 = r.pm25, r.pm10, r.pm100
-            noise = r.noise
+            ph, tss, debit, cod, nh3n = r.ph, r.tss, r.debit, r.cod, r.nh3n
+
+        row["cod"]  = round(cod,  2) if cfg.get("sensor_cod_enabled",  True) else 0
+        row["nh3n"] = round(nh3n, 2) if cfg.get("sensor_nh3n_enabled", True) else 0
 
         if cfg.get("sensor_ph_enabled",    True):
             row["pH"]    = round(ph,    2)
@@ -187,11 +186,11 @@ class NetworkManager:
             row["debit"] = round(debit, 2)
         if include_env:
             if cfg.get("sensor_dust_enabled",  True):
-                row["pm25"]  = round(pm25,  1)
-                row["pm10"]  = round(pm10,  1)
-                row["pm100"] = round(pm100, 1)
+                row["pm25"]  = round(r.pm25,  1)
+                row["pm10"]  = round(r.pm10,  1)
+                row["pm100"] = round(r.pm100, 1)
             if cfg.get("sensor_noise_enabled", True):
-                row["noise"] = round(noise, 1)
+                row["noise"] = round(r.noise, 1)
         return row
 
     def _make_jwt_raw(self, uid: str, key: str,
@@ -262,18 +261,19 @@ class NetworkManager:
             return ""
 
         if processed:
-            ph_v, tss_v, debit_v, *_ = self._apply_limits(
-                r.ph, r.tss, r.debit, 0, 0, 0, 0)
+            ph_v, tss_v, debit_v, cod_v, nh3n_v = self._apply_limits(
+                r.ph, r.tss, r.debit, r.cod, r.nh3n)
             uid = cfg.get("uid1_klhk") or cfg["uid1"]
         else:
-            ph_v, tss_v, debit_v = r.ph, r.tss, r.debit
+            ph_v, tss_v, debit_v, cod_v, nh3n_v = \
+                r.ph, r.tss, r.debit, r.cod, r.nh3n
             uid = cfg["uid1"]
 
         tl = cfg.get("tl_klhk", 2) if processed else cfg.get("tl_water", 1)
         payload: dict = {
             "uid":      uid,
-            "cod":      0,
-            "nh3n":     0,
+            "cod":      round(cod_v,  2) if cfg.get("sensor_cod_enabled",  True) else 0,
+            "nh3n":     round(nh3n_v, 2) if cfg.get("sensor_nh3n_enabled", True) else 0,
             "datetime": int(r.timestamp),
             "tl":       tl,
         }
@@ -311,12 +311,10 @@ class NetworkManager:
             return ""
 
         if processed:
-            _, _, _, pm25_v, pm10_v, tsp_v, noise_v = self._apply_limits(
-                0, 0, 0, pm25, pm10, tsp, noise)
             uid = cfg.get("uid1_klhk") or cfg["uid1"]
         else:
-            pm25_v, pm10_v, tsp_v, noise_v = pm25, pm10, tsp, noise
             uid = cfg["uid1"]
+        pm25_v, pm10_v, tsp_v, noise_v = pm25, pm10, tsp, noise
 
         tl = cfg.get("tl_klhk", 2) if processed else cfg.get("tl_water", 1)
         payload: dict = {
@@ -453,10 +451,9 @@ class NetworkManager:
             log.error(f"JWT2 status encode error: {e}")
             return ""
 
-    # Alias lama agar tidak ada error jika masih dipanggil
     def get_processed(self, r: SensorReading) -> tuple:
-        """Kembalikan (ph, tss, debit, pm25, pm10, pm100, noise) setelah filter — untuk GUI."""
-        return self._apply_limits(r.ph, r.tss, r.debit, r.pm25, r.pm10, r.pm100, r.noise)
+        """Kembalikan (ph, tss, debit, cod, nh3n) setelah filter batas."""
+        return self._apply_limits(r.ph, r.tss, r.debit, r.cod, r.nh3n)
 
     def create_jwt1(self, batch: List[SensorReading]) -> str:
         return self.create_jwt1_raw(batch)
