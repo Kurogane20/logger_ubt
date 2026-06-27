@@ -37,6 +37,17 @@ DEFAULT_CONFIG: dict = {
     "slave_id_noise":         4,     # Sound level meter — address 0, reg[0]/10 = dB
     "slave_id_temp":          5,     # Sensor suhu air
     "slave_id_weather":       6,     # YGC-CSM MINI Ultrasonic (angin/suhu udara/RH/tekanan)
+    "slave_id_cod":           7,
+    "slave_id_nh3n":          8,
+    # Pembacaan Modbus generik: nilai = reg[reg_index] / scale + offset
+    "reg_addr_cod":           0,
+    "reg_count_cod":          2,
+    "reg_index_cod":          1,
+    "scale_cod":              100.0,
+    "reg_addr_nh3n":          0,
+    "reg_count_nh3n":         2,
+    "reg_index_nh3n":         1,
+    "scale_nh3n":             100.0,
 
     # Server 1 — Mitra Mutiara
     # uid1          : UID untuk data MURNI (tanpa batas min/max)
@@ -84,6 +95,8 @@ DEFAULT_CONFIG: dict = {
     "sensor_noise_enabled":   True,   # Kebisingan dB (Sound Level Meter)
     "sensor_temp_enabled":    True,   # Suhu air (°C)
     "sensor_weather_enabled": True,   # YGC-CSM: angin, suhu udara, RH, tekanan
+    "sensor_cod_enabled":     True,
+    "sensor_nh3n_enabled":    True,
 
     # Floating per-sensor — True = sensor ini pakai data simulasi MESKI RS485 aktif.
     # Berguna saat sebagian sensor belum terpasang/rusak tapi sistem harus tetap jalan.
@@ -95,6 +108,8 @@ DEFAULT_CONFIG: dict = {
     "float_noise":            False,
     "float_temp":             False,
     "float_weather":          False,
+    "float_cod":              False,
+    "float_nh3n":             False,
 
     "offset_ph":              0.0,
     "offset_tss":             0.0,
@@ -106,6 +121,8 @@ DEFAULT_CONFIG: dict = {
     "offset_air_temp":        0.0,
     "offset_humidity":        0.0,
     "offset_pressure":        0.0,
+    "offset_cod":             0.0,
+    "offset_nh3n":            0.0,
 
     # Faktor perhitungan PM2.5 dan PM10 dari TSP (PM100)
     # PM2.5 = random(pm25_factor_min, pm25_factor_max) × TSP
@@ -141,6 +158,10 @@ DEFAULT_CONFIG: dict = {
     "sim_humidity_max":       90.0,
     "sim_pressure_min":       1000.0,
     "sim_pressure_max":       1015.0,
+    "sim_cod_min":            10.0,
+    "sim_cod_max":            30.0,
+    "sim_nh3n_min":           0.5,
+    "sim_nh3n_max":           2.0,
 
     # PIN untuk membuka tampilan data processed & batas Server 2
     "secret_pin":             "1234",
@@ -203,6 +224,18 @@ DEFAULT_CONFIG: dict = {
     "limit_temp_float_lo_max":   1.0,
     "limit_temp_float_hi_min":   49.0,
     "limit_temp_float_hi_max":   49.5,
+    "limit_cod_min":             0.0,
+    "limit_cod_max":             1000.0,   # mg/L
+    "limit_cod_float_lo_min":    1.0,
+    "limit_cod_float_lo_max":    5.0,
+    "limit_cod_float_hi_min":    995.0,
+    "limit_cod_float_hi_max":    999.0,
+    "limit_nh3n_min":            0.0,
+    "limit_nh3n_max":            100.0,    # mg/L
+    "limit_nh3n_float_lo_min":   0.1,
+    "limit_nh3n_float_lo_max":   0.5,
+    "limit_nh3n_float_hi_min":   99.0,
+    "limit_nh3n_float_hi_max":   99.5,
 }
 
 
