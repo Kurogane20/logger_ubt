@@ -70,6 +70,9 @@ C: dict = {
     "s_ph":         "#0052CC",   # pH  — electric blue
     "s_tss":        "#0091D5",   # TSS — ocean blue
     "s_debit":      "#00897B",   # Debit — teal emerald
+    "s_suhu":       "#E65100",   # Suhu air — orange
+    "s_cod":        "#6A1B9A",   # COD — purple
+    "s_nh3n":       "#00838F",   # NH3-N — cyan
 
     # Status
     "online":       "#00A878",   # Connected / success
