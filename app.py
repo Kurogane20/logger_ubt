@@ -4,7 +4,6 @@ Menjalankan dua background thread (sensor & network) dan GUI di main thread.
 """
 
 import json
-import math
 import queue
 import random
 import time
@@ -409,40 +408,21 @@ class SparingApp:
 
     # ── Floating Mode — data acak dalam batas yang dikonfigurasi ─────────────
     def _simulate(self) -> SensorReading:
-        c   = self.cfg
-        tsp = round(random.uniform(c.get("sim_tsp_min",  30.0),
-                                   c.get("sim_tsp_max", 200.0)), 1)
-        f25 = random.uniform(c.get("pm25_factor_min", 0.1), c.get("pm25_factor_max", 0.2))
-        f10 = random.uniform(c.get("pm10_factor_min", 0.3), c.get("pm10_factor_max", 0.4))
+        c = self.cfg
         return SensorReading(
             timestamp  = time.time(),
-            ph         = round(random.uniform(c.get("sim_ph_min",         7.5),
-                                              c.get("sim_ph_max",         7.6)),   2),
-            tss        = round(random.uniform(c.get("sim_tss_min",        80.0),
-                                              c.get("sim_tss_max",        90.0)),  2),
-            debit      = round(random.uniform(c.get("sim_debit_min",      0.01),
-                                              c.get("sim_debit_max",      0.10)),  2),
-            cod        = round(random.uniform(c.get("sim_cod_min",  10.0),
-                                              c.get("sim_cod_max",  30.0)), 2),
-            nh3n       = round(random.uniform(c.get("sim_nh3n_min", 0.5),
-                                              c.get("sim_nh3n_max", 2.0)), 2),
-            temp       = round(random.uniform(c.get("sim_temp_min",       25.0),
-                                              c.get("sim_temp_max",       30.0)),  1),
-            pm100      = tsp,
-            pm25       = round(f25 * tsp, 1),
-            pm10       = round(f10 * tsp, 1),
-            noise      = round(random.uniform(c.get("sim_noise_min",      40.0),
-                                              c.get("sim_noise_max",      80.0)),  1),
-            wind_speed = round(random.uniform(c.get("sim_wind_speed_min", 0.0),
-                                              c.get("sim_wind_speed_max", 5.0)),   2),
-            wind_dir   = round(random.uniform(c.get("sim_wind_dir_min",   0),
-                                              c.get("sim_wind_dir_max",   359))),
-            air_temp   = round(random.uniform(c.get("sim_air_temp_min",   25.0),
-                                              c.get("sim_air_temp_max",   35.0)),  1),
-            humidity   = round(random.uniform(c.get("sim_humidity_min",   60.0),
-                                              c.get("sim_humidity_max",   90.0)),  1),
-            pressure   = round(random.uniform(c.get("sim_pressure_min",   1000.0),
-                                              c.get("sim_pressure_max",   1015.0)), 1),
+            ph         = round(random.uniform(c.get("sim_ph_min",    7.5),
+                                              c.get("sim_ph_max",    7.6)),   2),
+            tss        = round(random.uniform(c.get("sim_tss_min",   80.0),
+                                              c.get("sim_tss_max",   90.0)),  2),
+            debit      = round(random.uniform(c.get("sim_debit_min", 0.01),
+                                              c.get("sim_debit_max", 0.10)),  2),
+            cod        = round(random.uniform(c.get("sim_cod_min",   10.0),
+                                              c.get("sim_cod_max",   30.0)),  2),
+            nh3n       = round(random.uniform(c.get("sim_nh3n_min",  0.5),
+                                              c.get("sim_nh3n_max",  2.0)),   2),
+            temp       = round(random.uniform(c.get("sim_temp_min",  25.0),
+                                              c.get("sim_temp_max",  30.0)),  1),
         )
 
     def toggle_test_mode(self) -> None:
@@ -529,7 +509,7 @@ class SparingApp:
         ).start()
 
     # ── Floating per-sensor ──────────────────────────────────────────────────
-    _FLOAT_SENSORS = ("ph", "tss", "debit", "dust", "noise", "temp", "weather")
+    _FLOAT_SENSORS = ("ph", "tss", "debit", "cod", "nh3n", "temp")
 
     def _sensor_is_float(self, name: str) -> bool:
         """True bila sensor ini floating — global atau per-sensor."""
