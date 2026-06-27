@@ -19,3 +19,10 @@ def test_cod_nh3n_limit_keys_present():
         for s in ("min", "max", "float_lo_min", "float_lo_max",
                   "float_hi_min", "float_hi_max"):
             assert f"limit_{p}_{s}" in DEFAULT_CONFIG, f"missing limit_{p}_{s}"
+
+
+def test_env_keys_removed():
+    for k in ("sensor_dust_enabled", "sensor_noise_enabled",
+              "sensor_weather_enabled", "limit_noise_min", "sim_tsp_min"):
+        assert k not in DEFAULT_CONFIG
+    assert "sensor_temp_enabled" in DEFAULT_CONFIG

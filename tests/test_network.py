@@ -34,3 +34,12 @@ def test_apply_limits_caps_cod_below_min():
     cfg["limit_cod_float_lo_max"] = 6.0
     _, _, _, cod_out, _ = n._apply_limits(7.0, 50.0, 1.2, 1.0, 1.1)
     assert 5.0 <= cod_out <= 6.0
+
+
+def test_jwt2_includes_cod_nh3n():
+    n, _ = _net()
+    r = SensorReading(ph=7.0, tss=50.0, debit=1.2, cod=18.0, nh3n=1.1)
+    token = n.create_jwt2([r])
+    payload = jwt.decode(token, "testkey2", algorithms=["HS256"])
+    assert payload["data"][0]["cod"] == 18.0
+    assert payload["data"][0]["nh3n"] == 1.1

@@ -158,13 +158,11 @@ class NetworkManager:
             self._cap_fluctuate(nh3n,  *_f("nh3n")),
         )
 
-    def _build_row(self, r: SensorReading, processed: bool = False,
-                   include_env: bool = True) -> dict:
+    def _build_row(self, r: SensorReading, processed: bool = False) -> dict:
         """
         Bangun satu baris data untuk JWT.
         Hanya sertakan field sensor yang diaktifkan di config.
         Jika processed=True, terapkan filter min/max.
-        include_env=False → tidak sertakan PM dan noise (untuk Server 2 KLHK).
         """
         row: dict = {"datetime": int(r.timestamp)}
         cfg = self.cfg
@@ -184,13 +182,6 @@ class NetworkManager:
             row["tss"]   = round(tss,   2)
         if cfg.get("sensor_debit_enabled", True):
             row["debit"] = round(debit, 2)
-        if include_env:
-            if cfg.get("sensor_dust_enabled",  True):
-                row["pm25"]  = round(r.pm25,  1)
-                row["pm10"]  = round(r.pm10,  1)
-                row["pm100"] = round(r.pm100, 1)
-            if cfg.get("sensor_noise_enabled", True):
-                row["noise"] = round(r.noise, 1)
         return row
 
     def _make_jwt_raw(self, uid: str, key: str,
@@ -232,7 +223,7 @@ class NetworkManager:
         """Server 2 — data processed/filtered (uid2, secret_key2), tanpa data udara."""
         if not self.secret_key2 or not HAS_JWT or pyjwt is None:
             return ""
-        rows = [self._build_row(r, processed=True, include_env=False) for r in batch]
+        rows = [self._build_row(r, processed=True) for r in batch]
         try:
             return pyjwt.encode(
                 {"uid": self.cfg["uid2"], "data": rows},
@@ -287,91 +278,6 @@ class NetworkManager:
             log.error(f"JWT water encode error: {e}")
             return ""
 
-    def create_jwt_s1_env(self, pm25: float, pm10: float, tsp: float,
-                          noise: float, timestamp: float,
-                          link_video_id: str = "",
-                          processed: bool = False,
-                          wind_speed: float = 0.0, wind_dir: float = 0.0,
-                          air_temp: float = 0.0, humidity: float = 0.0,
-                          pressure: float = 0.0) -> str:
-        """
-        JWT Server 1 — kualitas udara (PM + noise + cuaca YGC-CSM), per 1 menit.
-        processed=False → data raw (Internal).
-        processed=True  → data setelah apply_limits (KLHK).
-        Kembalikan "" jika tidak ada sensor udara yang aktif.
-        """
-        if not self.secret_key1 or not HAS_JWT or pyjwt is None:
-            return ""
-        cfg        = self.cfg
-        dust_on    = cfg.get("sensor_dust_enabled",    True)
-        noise_on   = cfg.get("sensor_noise_enabled",   True)
-        weather_on = cfg.get("sensor_weather_enabled", True)
-
-        if not (dust_on or noise_on or weather_on):
-            return ""
-
-        if processed:
-            uid = cfg.get("uid1_klhk") or cfg["uid1"]
-        else:
-            uid = cfg["uid1"]
-        pm25_v, pm10_v, tsp_v, noise_v = pm25, pm10, tsp, noise
-
-        tl = cfg.get("tl_klhk", 2) if processed else cfg.get("tl_water", 1)
-        payload: dict = {
-            "uid":      uid,
-            "tl":       tl,
-            "datetime": int(timestamp),
-        }
-        if dust_on:
-            payload["pm2.5"] = round(pm25_v, 1)
-            payload["pm10"]  = round(pm10_v, 1)
-            payload["tsp"]   = round(tsp_v,  1)
-        if noise_on:
-            payload["noise"] = round(noise_v, 1)
-        if weather_on:
-            payload["wind_speed"] = round(wind_speed, 2)
-            payload["wind_dir"]   = int(wind_dir)
-            payload["air_temp"]   = round(air_temp,   1)
-            payload["humidity"]   = round(humidity,   1)
-            payload["pressure"]   = round(pressure,   1)
-        if link_video_id:
-            payload["link_video_id"] = link_video_id
-        try:
-            return pyjwt.encode(payload, self.secret_key1, algorithm="HS256")
-        except Exception as e:
-            log.error(f"JWT s1_env encode error: {e}")
-            return ""
-
-    def create_jwt_s1_weather(self, r: SensorReading,
-                              processed: bool = False) -> str:
-        """
-        JWT Server 1 — data cuaca YGC-CSM (angin, suhu udara, RH, tekanan).
-        Dikirim per 2 menit bersama data air.
-        Kembalikan "" jika sensor cuaca tidak aktif.
-        """
-        if not self.cfg.get("sensor_weather_enabled", True):
-            return ""
-        if not self.secret_key1 or not HAS_JWT or pyjwt is None:
-            return ""
-        cfg = self.cfg
-        uid = (cfg.get("uid1_klhk") or cfg["uid1"]) if processed else cfg["uid1"]
-        tl  = cfg.get("tl_klhk", 2) if processed else cfg.get("tl_water", 1)
-        payload = {
-            "uid":        uid,
-            "tl":         tl,
-            "datetime":   int(r.timestamp),
-            "wind_speed": round(r.wind_speed, 2),
-            "wind_dir":   int(r.wind_dir),
-            "air_temp":   round(r.air_temp,   1),
-            "humidity":   round(r.humidity,   1),
-            "pressure":   round(r.pressure,   1),
-        }
-        try:
-            return pyjwt.encode(payload, self.secret_key1, algorithm="HS256")
-        except Exception as e:
-            log.error(f"JWT s1_weather encode error: {e}")
-            return ""
-
     def create_jwt1_water_status(self, status_code: int, timestamp: float,
                                  processed: bool = False) -> str:
         """JWT Server 1 kualitas air — kondisi tidak normal sesuai SK 3441/2025 §6.2.6.6g.
@@ -392,38 +298,6 @@ class NetworkManager:
             return pyjwt.encode(payload, self.secret_key1, algorithm="HS256")
         except Exception as e:
             log.error(f"JWT water status encode error: {e}")
-            return ""
-
-    def create_jwt_s1_env_status(self, status_code: int, timestamp: float,
-                                  link_video_id: str = "",
-                                  processed: bool = False) -> str:
-        """JWT Server 1 kualitas udara — kondisi tidak normal sesuai SK 3441/2025 §6.2.6.6g."""
-        if not self.secret_key1 or not HAS_JWT or pyjwt is None:
-            return ""
-        cfg        = self.cfg
-        dust_on    = cfg.get("sensor_dust_enabled",    True)
-        noise_on   = cfg.get("sensor_noise_enabled",   True)
-        weather_on = cfg.get("sensor_weather_enabled", True)
-        if not (dust_on or noise_on or weather_on):
-            return ""
-        uid = (cfg.get("uid1_klhk") or cfg["uid1"]) if processed else cfg["uid1"]
-        tl  = cfg.get("tl_klhk", 2) if processed else cfg.get("tl_water", 1)
-        v   = status_code
-        payload: dict = {"uid": uid, "tl": tl, "datetime": int(timestamp)}
-        if dust_on:
-            payload["pm2.5"] = v; payload["pm10"] = v; payload["tsp"] = v
-        if noise_on:
-            payload["noise"] = v
-        if weather_on:
-            payload["wind_speed"] = v; payload["wind_dir"]  = v
-            payload["air_temp"]   = v; payload["humidity"]  = v
-            payload["pressure"]   = v
-        if link_video_id:
-            payload["link_video_id"] = link_video_id
-        try:
-            return pyjwt.encode(payload, self.secret_key1, algorithm="HS256")
-        except Exception as e:
-            log.error(f"JWT s1_env status encode error: {e}")
             return ""
 
     def create_jwt2_status(self, status_code: int, batch_size: int) -> str:

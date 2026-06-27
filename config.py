@@ -33,10 +33,7 @@ DEFAULT_CONFIG: dict = {
     "slave_id_ph":            2,
     "slave_id_tss":           10,
     "slave_id_debit":         1,
-    "slave_id_dust":          3,     # RK300-02 dust sensor
-    "slave_id_noise":         4,     # Sound level meter — address 0, reg[0]/10 = dB
     "slave_id_temp":          5,     # Sensor suhu air
-    "slave_id_weather":       6,     # YGC-CSM MINI Ultrasonic (angin/suhu udara/RH/tekanan)
     "slave_id_cod":           7,
     "slave_id_nh3n":          8,
     # Pembacaan Modbus generik: nilai = reg[reg_index] / scale + offset
@@ -91,10 +88,7 @@ DEFAULT_CONFIG: dict = {
     "sensor_ph_enabled":      True,
     "sensor_tss_enabled":     True,
     "sensor_debit_enabled":   True,
-    "sensor_dust_enabled":    True,   # PM2.5, PM10, PM100 (RK300-02)
-    "sensor_noise_enabled":   True,   # Kebisingan dB (Sound Level Meter)
     "sensor_temp_enabled":    True,   # Suhu air (°C)
-    "sensor_weather_enabled": True,   # YGC-CSM: angin, suhu udara, RH, tekanan
     "sensor_cod_enabled":     True,
     "sensor_nh3n_enabled":    True,
 
@@ -104,33 +98,16 @@ DEFAULT_CONFIG: dict = {
     "float_ph":               False,
     "float_tss":              False,
     "float_debit":            False,
-    "float_dust":             False,   # PM2.5/PM10/PM100
-    "float_noise":            False,
     "float_temp":             False,
-    "float_weather":          False,
     "float_cod":              False,
     "float_nh3n":             False,
 
     "offset_ph":              0.0,
     "offset_tss":             0.0,
     "offset_debit":           0.0,
-    "offset_pm100":           0.0,
-    "offset_noise":           0.0,
     "offset_temp":            0.0,
-    "offset_wind_speed":      0.0,
-    "offset_air_temp":        0.0,
-    "offset_humidity":        0.0,
-    "offset_pressure":        0.0,
     "offset_cod":             0.0,
     "offset_nh3n":            0.0,
-
-    # Faktor perhitungan PM2.5 dan PM10 dari TSP (PM100)
-    # PM2.5 = random(pm25_factor_min, pm25_factor_max) × TSP
-    # PM10  = random(pm10_factor_min, pm10_factor_max) × TSP
-    "pm25_factor_min":        0.1,
-    "pm25_factor_max":        0.2,
-    "pm10_factor_min":        0.3,
-    "pm10_factor_max":        0.4,
 
     # Floating Mode (tanpa hardware) — aktif otomatis jika pymodbus tidak tersedia
     "simulate_sensors":       not HAS_MODBUS,
@@ -142,22 +119,8 @@ DEFAULT_CONFIG: dict = {
     "sim_tss_max":            90.0,
     "sim_debit_min":          0.60,   # m³/menit
     "sim_debit_max":          6.00,   # m³/menit
-    "sim_tsp_min":            30.0,
-    "sim_tsp_max":            200.0,
-    "sim_noise_min":          40.0,
-    "sim_noise_max":          80.0,
     "sim_temp_min":           25.0,
     "sim_temp_max":           30.0,
-    "sim_wind_speed_min":     0.0,
-    "sim_wind_speed_max":     5.0,
-    "sim_wind_dir_min":       0,
-    "sim_wind_dir_max":       359,
-    "sim_air_temp_min":       25.0,
-    "sim_air_temp_max":       35.0,
-    "sim_humidity_min":       60.0,
-    "sim_humidity_max":       90.0,
-    "sim_pressure_min":       1000.0,
-    "sim_pressure_max":       1015.0,
     "sim_cod_min":            10.0,
     "sim_cod_max":            30.0,
     "sim_nh3n_min":           0.5,
@@ -194,30 +157,6 @@ DEFAULT_CONFIG: dict = {
     "limit_debit_float_lo_max":  1.0,
     "limit_debit_float_hi_min":  99.0,
     "limit_debit_float_hi_max":  99.9,
-    "limit_pm25_min":            0.0,
-    "limit_pm25_max":            1000.0,  # ug/m³
-    "limit_pm25_float_lo_min":   1.0,
-    "limit_pm25_float_lo_max":   5.0,
-    "limit_pm25_float_hi_min":   995.0,
-    "limit_pm25_float_hi_max":   999.0,
-    "limit_pm10_min":            0.0,
-    "limit_pm10_max":            1000.0,  # ug/m³
-    "limit_pm10_float_lo_min":   1.0,
-    "limit_pm10_float_lo_max":   5.0,
-    "limit_pm10_float_hi_min":   995.0,
-    "limit_pm10_float_hi_max":   999.0,
-    "limit_pm100_min":           0.0,
-    "limit_pm100_max":           1000.0,  # ug/m³
-    "limit_pm100_float_lo_min":  1.0,
-    "limit_pm100_float_lo_max":  5.0,
-    "limit_pm100_float_hi_min":  995.0,
-    "limit_pm100_float_hi_max":  999.0,
-    "limit_noise_min":           0.0,
-    "limit_noise_max":           120.0,   # dB
-    "limit_noise_float_lo_min":  1.0,
-    "limit_noise_float_lo_max":  3.0,
-    "limit_noise_float_hi_min":  117.0,
-    "limit_noise_float_hi_max":  119.0,
     "limit_temp_min":            0.0,
     "limit_temp_max":            50.0,    # °C
     "limit_temp_float_lo_min":   0.5,
