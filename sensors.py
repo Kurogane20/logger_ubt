@@ -200,6 +200,16 @@ class SensorReader:
         return round(random.uniform(c.get("sim_debit_min", 0.01),
                                     c.get("sim_debit_max", 0.10)), 2)
 
+    def _sim_cod(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_cod_min", 10.0),
+                                    c.get("sim_cod_max", 30.0)), 2)
+
+    def _sim_nh3n(self) -> float:
+        c = self.cfg
+        return round(random.uniform(c.get("sim_nh3n_min", 0.5),
+                                    c.get("sim_nh3n_max", 2.0)), 2)
+
     def _sim_dust(self) -> tuple:
         c = self.cfg
         tsp = round(random.uniform(c.get("sim_tsp_min", 30.0),
@@ -297,6 +307,38 @@ class SensorReader:
             log.error(f"Baca Debit gagal: {e}")
             self._on_error(f"[SENSOR] Baca Debit gagal: {e}")
         return 0.0
+
+    # ── COD & NH3-N (generic Modbus scaled reader) ───────────────────────────
+    def _read_scaled(self, sensor: str, slave_key: str, addr_key: str,
+                     count_key: str, index_key: str, scale_key: str,
+                     offset_key: str, sim_fn) -> float:
+        """Pembacaan Modbus generik: nilai = reg[index] / scale + offset."""
+        if self._is_float(sensor) or self._mb is None:
+            return sim_fn()
+        try:
+            addr  = self.cfg[addr_key]
+            count = self.cfg[count_key]
+            r = self._rhr(addr, count, self.cfg[slave_key])
+            if not r.isError():
+                idx = self.cfg[index_key]
+                val = r.registers[idx] / self.cfg[scale_key]
+                return round(val + self.cfg.get(offset_key, 0.0), 3)
+            msg = f"[SENSOR] {sensor} isError: {r}"
+            log.error(msg); self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca {sensor} gagal: {e}")
+            self._on_error(f"[SENSOR] Baca {sensor} gagal: {e}")
+        return 0.0
+
+    def _read_cod(self) -> float:
+        return self._read_scaled(
+            "cod", "slave_id_cod", "reg_addr_cod", "reg_count_cod",
+            "reg_index_cod", "scale_cod", "offset_cod", self._sim_cod)
+
+    def _read_nh3n(self) -> float:
+        return self._read_scaled(
+            "nh3n", "slave_id_nh3n", "reg_addr_nh3n", "reg_count_nh3n",
+            "reg_index_nh3n", "scale_nh3n", "offset_nh3n", self._sim_nh3n)
 
     # ── Debu (RK300-02) ───────────────────────────────────────────────────────
     def _calc_pm_from_tsp(self, pm100: float) -> tuple:
@@ -468,6 +510,12 @@ class SensorReader:
                 time.sleep(0.1)
             if self.cfg.get("sensor_debit_enabled", True):
                 reading.debit = self._read_debit()
+                time.sleep(0.1)
+            if self.cfg.get("sensor_cod_enabled", True):
+                reading.cod   = self._read_cod()
+                time.sleep(0.1)
+            if self.cfg.get("sensor_nh3n_enabled", True):
+                reading.nh3n  = self._read_nh3n()
                 time.sleep(0.1)
             if self.cfg.get("sensor_dust_enabled", True):
                 reading.pm25, reading.pm10, reading.pm100 = self._read_dust()
