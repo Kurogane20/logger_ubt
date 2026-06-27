@@ -40,6 +40,8 @@ class SparingApp:
     """
 
     def __init__(self) -> None:
+        from datetime import datetime as _dt
+        self.started_at = _dt.now()
         self.cfg        = load_config()
         self.sensor_rdr: Optional[SensorReader] = None
         self.net        = NetworkManager(self.cfg, on_log=self._log)
@@ -52,8 +54,6 @@ class SparingApp:
         self._running    = True
         self._gap_filled = False   # pastikan gap fill hanya jalan sekali
         self._q: queue.Queue = queue.Queue()
-        self._noise_buf: List[float] = []         # buffer sampel noise 1 menit
-        self._noise_buf_lock = threading.Lock()   # proteksi akses antar-thread
         self._sensor_wake = threading.Event()     # set() untuk mempersingkat sleep sensor loop
         self._last_r: Optional[SensorReading] = None  # reading terakhir untuk sinkronisasi sim
         self._last_r_lock = threading.Lock()
@@ -80,8 +80,6 @@ class SparingApp:
                          daemon=True, name="sensor").start()
         threading.Thread(target=self._network_loop,
                          daemon=True, name="network").start()
-        threading.Thread(target=self._noise_loop,
-                         daemon=True, name="noise").start()
         if self.cfg.get("sysmon_enabled", True):
             threading.Thread(target=self._sysmon_loop,
                              daemon=True, name="sysmon").start()
@@ -145,16 +143,6 @@ class SparingApp:
 
                 self.root.after(0, self.gui.update_connection, "rs485", port_ok)
 
-                # ── Leq noise — dari buffer yang diisi _noise_loop (per 1 menit) ─
-                if self.cfg.get("sensor_noise_enabled", True):
-                    with self._noise_buf_lock:
-                        buf_copy = list(self._noise_buf)
-                    leq = self._compute_leq(buf_copy)
-                    # Pakai Leq dari buffer jika tersedia; jika buffer masih kosong
-                    # (< 1 menit pertama) pertahankan nilai dari _simulate()
-                    if leq > 0:
-                        r.noise = leq
-
                 self.batch.append(r)
                 n        = len(self.batch)
                 if not use_hw:
@@ -164,31 +152,17 @@ class SparingApp:
                 else:
                     mode_tag = ""                # semua dari hardware
 
-                # Hitung nilai processed untuk ditampilkan di GUI
-                proc_ph, proc_tss, proc_debit, \
-                proc_pm25, proc_pm10, proc_pm100, \
-                proc_noise = self.net.get_processed(r)
-
                 self._log(
                     f"{mode_tag}Data {n}/{batch_size} — "
                     f"pH={r.ph:.2f}  TSS={r.tss:.2f} mg/L  "
                     f"Debit={r.debit:.2f} m³/menit  "
-                    f"COD={r.cod:.2f}  NH3-N={r.nh3n:.2f} mg/L  "
-                    f"PM2.5={r.pm25:.1f}  PM10={r.pm10:.1f}  PM100={r.pm100:.1f} ug/m³  "
-                    f"Leq={r.noise:.1f} dB  Temp={r.temp:.1f}°C"
+                    f"COD={r.cod:.2f}  NH3-N={r.nh3n:.2f} mg/L"
                 )
                 self.root.after(0, self.gui.update_sensors, r)
-                self.root.after(0, self.gui.update_sensors_processed,
-                                proc_ph, proc_tss, proc_debit)
-                self.root.after(0, self.gui.update_dust_processed,
-                                proc_pm25, proc_pm10, proc_pm100)
-                self.root.after(0, self.gui.update_noise_processed, proc_noise)
                 self.root.after(0, self.gui.update_count, n, batch_size)
 
                 # Server 1: kualitas air (pH, TSS, Debit) — per 2 menit
                 self._send_s1_water(r)
-                # Server 1: data cuaca YGC-CSM — per 2 menit
-                self._send_s1_weather(r)
 
                 # Server 2: kirim saat batch penuh (jika diaktifkan)
                 if n >= batch_size:
@@ -247,103 +221,6 @@ class SparingApp:
             except Exception as e:
                 self._log(f"[ERROR] network loop: {e}")
             time.sleep(30)
-
-    # ── Noise loop — sampling noise setiap 1 menit untuk Leq ─────────────────
-    def _noise_loop(self) -> None:
-        """
-        Sampel noise sensor setiap 60 detik (1 menit).
-        Leq 10 menit = rata-rata energi dari 10 sampel terakhir.
-        Leq = 10 × log10( (1/N) × Σ 10^(Li/10) )
-        """
-        _SAMPLE_SEC = 60      # interval sampling (detik)
-        _WINDOW_SEC = 600     # jendela Leq (detik) — 10 menit
-        _MAX_N      = _WINDOW_SEC // _SAMPLE_SEC   # 10 sampel
-
-        time.sleep(2)   # tunggu GUI & sensor reader siap
-
-        while self._running:
-            try:
-                now    = time.time()
-                use_hw = bool(self.sensor_rdr and self.sensor_rdr._port_ok)
-
-                # Ambil reading terakhir dari sensor_loop untuk sinkronisasi nilai simulasi
-                with self._last_r_lock:
-                    last = self._last_r
-
-                # Sensor yang di-float pakai nilai dari `last` (sama dengan GUI),
-                # bukan baca hardware lagi — agar tampilan == data terkirim.
-                noise_hw   = use_hw and not self._sensor_is_float("noise")
-                dust_hw    = use_hw and not self._sensor_is_float("dust")
-                weather_hw = use_hw and not self._sensor_is_float("weather")
-
-                # Baca noise
-                if self.cfg.get("sensor_noise_enabled", True):
-                    noise = (self.sensor_rdr.read_noise_safe()
-                             if noise_hw
-                             else round(random.uniform(
-                                 self.cfg.get("sim_noise_min", 40.0),
-                                 self.cfg.get("sim_noise_max", 80.0)), 1))
-                    if noise > 0:
-                        with self._noise_buf_lock:
-                            self._noise_buf.append(noise)
-                            if len(self._noise_buf) > _MAX_N:
-                                self._noise_buf.pop(0)
-                    self.root.after(0, self.gui.update_noise_instant, noise)
-                else:
-                    noise = 0.0
-
-                # Baca debu (PM)
-                if self.cfg.get("sensor_dust_enabled", True):
-                    if dust_hw:
-                        pm25, pm10, tsp = self.sensor_rdr.read_dust_safe()
-                    elif last is not None:
-                        # Pakai nilai dari _simulate() yang sama dengan yang ditampilkan di GUI
-                        pm25, pm10, tsp = last.pm25, last.pm10, last.pm100
-                    else:
-                        tsp  = round(random.uniform(
-                                self.cfg.get("sim_tsp_min", 30.0),
-                                self.cfg.get("sim_tsp_max", 200.0)), 1)
-                        pm25 = round(random.uniform(
-                            self.cfg.get("pm25_factor_min", 0.1),
-                            self.cfg.get("pm25_factor_max", 0.2)) * tsp, 1)
-                        pm10 = round(random.uniform(
-                            self.cfg.get("pm10_factor_min", 0.3),
-                            self.cfg.get("pm10_factor_max", 0.4)) * tsp, 1)
-                else:
-                    pm25 = pm10 = tsp = 0.0
-
-                # Baca cuaca (YGC-CSM)
-                if self.cfg.get("sensor_weather_enabled", True):
-                    if weather_hw:
-                        ws, wd, at, rh, pr = self.sensor_rdr.read_weather_safe()
-                    elif last is not None:
-                        # Pakai nilai dari _simulate() yang sama dengan yang ditampilkan di GUI
-                        ws, wd, at, rh, pr = (last.wind_speed, last.wind_dir,
-                                              last.air_temp, last.humidity, last.pressure)
-                    else:
-                        c = self.cfg
-                        ws = round(random.uniform(c.get("sim_wind_speed_min", 0.0),
-                                                  c.get("sim_wind_speed_max", 5.0)), 2)
-                        wd = round(random.uniform(c.get("sim_wind_dir_min", 0),
-                                                  c.get("sim_wind_dir_max", 359)))
-                        at = round(random.uniform(c.get("sim_air_temp_min", 25.0),
-                                                  c.get("sim_air_temp_max", 35.0)), 1)
-                        rh = round(random.uniform(c.get("sim_humidity_min", 60.0),
-                                                  c.get("sim_humidity_max", 90.0)), 1)
-                        pr = round(random.uniform(c.get("sim_pressure_min", 1000.0),
-                                                  c.get("sim_pressure_max", 1015.0)), 1)
-                else:
-                    ws = wd = at = rh = pr = 0.0
-
-                self.root.after(0, self.gui.update_weather, ws, wd, at, rh, pr)
-
-                # Kirim ke Server 1 (per 1 menit)
-                self._send_s1_env(pm25, pm10, tsp, noise, now,
-                                  ws, wd, at, rh, pr)
-
-            except Exception as e:
-                self._log(f"[ERROR] noise loop: {e}")
-            time.sleep(_SAMPLE_SEC)
 
     # ── Monitor resource sistem — diagnosa penyebab device mati ──────────────
     def _sysmon_loop(self) -> None:
@@ -475,129 +352,6 @@ class SparingApp:
         self.root.after(0, self.gui.update_buffer,
                         self.storage_s1.count() + self.storage_s2.count())
 
-    # ── Kirim ke Server 1 — cuaca YGC-CSM, per 2 menit ──────────────────────
-    def _send_s1_weather(self, r: SensorReading) -> None:
-        """
-        Kirim data cuaca YGC-CSM (angin, suhu udara, RH, tekanan) ke Server 1
-        setiap 2 menit, bersamaan dengan data air.
-        """
-        if not self.cfg.get("sensor_weather_enabled", True):
-            return
-        if self._op_mode != "normal":
-            return
-        int_on  = self.cfg.get("logger_internal", True)
-        klhk_on = self.cfg.get("logger_klhk",     False)
-        jwts = []
-        if int_on:
-            j = self.net.create_jwt_s1_weather(r, processed=False)
-            if j: jwts.append(("Internal", j))
-        if klhk_on:
-            j = self.net.create_jwt_s1_weather(r, processed=True)
-            if j: jwts.append(("KLHK", j))
-        if not jwts:
-            return
-
-        online = self.net.check_internet()
-        ok_any = False
-        for tag, jwt in jwts:
-            if not online:
-                self.storage_s1.save(jwt_s1=jwt)
-                continue
-            ok = self.net.post(self.cfg["server_url1"],
-                               json.dumps({"token": jwt}))
-            self.root.after(0, self.gui.update_connection, "server1", ok)
-            if ok:
-                ok_any = True
-                self._log(
-                    f"✓ [S1-Cuaca/{tag}] "
-                    f"Angin={r.wind_speed}m/s {int(r.wind_dir)}°  "
-                    f"SuhuU={r.air_temp}°C  RH={r.humidity}%  "
-                    f"P={r.pressure}hPa"
-                )
-            else:
-                self._log(f"✗ [S1-Cuaca/{tag}] Gagal — disimpan ke buffer")
-                self.storage_s1.save(jwt_s1=jwt)
-        if ok_any:
-            self.root.after(0, self.gui.update_last_tx, r.timestamp)
-        self.root.after(0, self.gui.update_buffer,
-                        self.storage_s1.count() + self.storage_s2.count())
-
-    # ── Kirim ke Server 1 — per 1 menit (pm + noise + link_video_id) ──────────
-    def _send_s1_env(self, pm25: float, pm10: float, tsp: float,
-                     noise: float, timestamp: float,
-                     wind_speed: float = 0.0, wind_dir: float = 0.0,
-                     air_temp: float = 0.0, humidity: float = 0.0,
-                     pressure: float = 0.0) -> None:
-        """
-        Kirim data lingkungan (debu + noise) ke Server 1 setiap 1 menit.
-        Format: raw JSON langsung (uid, pm_25, pm_10, tsp, noise, temp,
-                datetime_unix, link_video_id) — tanpa JWT wrapper.
-        Jika offline atau gagal, simpan ke buffer untuk dikirim ulang.
-        """
-        link_video_id = self.cfg.get("link_video_id", "")
-        int_on  = self.cfg.get("logger_internal", True)
-        klhk_on = self.cfg.get("logger_klhk",     False)
-
-        # Hitung nilai processed PM+noise untuk log KLHK
-        _, _, _, pm25_p, pm10_p, tsp_p, noise_p = self.net._apply_limits(
-            0, 0, 0, pm25, pm10, tsp, noise)
-
-        op = self._op_mode
-        sc = {"stopped": -1, "calibrating": -2, "malfunction": -3}.get(op)
-        jwts = []
-        if sc is not None:
-            if int_on:
-                j = self.net.create_jwt_s1_env_status(sc, timestamp, link_video_id, processed=False)
-                if j: jwts.append(("Internal", sc, sc, sc, sc, j))
-            if klhk_on:
-                j = self.net.create_jwt_s1_env_status(sc, timestamp, link_video_id, processed=True)
-                if j: jwts.append(("KLHK", sc, sc, sc, sc, j))
-        else:
-            if int_on:
-                j = self.net.create_jwt_s1_env(
-                    pm25, pm10, tsp, noise, timestamp, link_video_id,
-                    processed=False,
-                    wind_speed=wind_speed, wind_dir=wind_dir,
-                    air_temp=air_temp, humidity=humidity, pressure=pressure)
-                if j: jwts.append(("Internal", pm25, pm10, tsp, noise, j))
-            if klhk_on:
-                j = self.net.create_jwt_s1_env(
-                    pm25, pm10, tsp, noise, timestamp, link_video_id,
-                    processed=True,
-                    wind_speed=wind_speed, wind_dir=wind_dir,
-                    air_temp=air_temp, humidity=humidity, pressure=pressure)
-                if j: jwts.append(("KLHK", pm25_p, pm10_p, tsp_p, noise_p, j))
-        if not jwts:
-            return
-
-        online = self.net.check_internet()
-        # Kirim ulang buffer lama (sekali saja)
-        if online:
-            flushed = self.storage_s1.flush_s1_env(self.net)
-            if flushed:
-                self._log(f"[S1] {flushed} data lama dari buffer berhasil dikirim ulang")
-
-        ok_any = False
-        for tag, p25, p10, ptsp, pnoise, jwt in jwts:
-            if not online:
-                self.storage_s1.save(jwt_s1=jwt)
-                continue
-            ok = self.net.post(self.cfg["server_url1"],
-                               json.dumps({"token": jwt}))
-            self.root.after(0, self.gui.update_connection, "server1", ok)
-            if ok:
-                ok_any = True
-                self._log(f"✓ [S1/{tag}] PM+Noise  "
-                          f"PM2.5={p25} PM10={p10} TSP={ptsp} Noise={pnoise} dB")
-            else:
-                self._log(f"✗ [S1/{tag}] Gagal — disimpan ke buffer")
-                self.storage_s1.save(jwt_s1=jwt)
-        if ok_any:
-            self.last_tx = timestamp
-            self.root.after(0, self.gui.update_last_tx, self.last_tx)
-        self.root.after(0, self.gui.update_buffer,
-                        self.storage_s1.count() + self.storage_s2.count())
-
     # ── Kirim batch 30 data ────────────────────────────────────────────────────
     # ── Kirim ke Server 2 — setiap batch penuh (30 data × 2 menit = 60 menit) ─
     def _send_s2_batch(self) -> None:
@@ -652,20 +406,6 @@ class SparingApp:
 
         # Perbarui secret key setelah setiap siklus kirim
         threading.Thread(target=self.net.fetch_all_keys, daemon=True).start()
-
-    # ── Leq — equivalent continuous sound level ───────────────────────────────
-    @staticmethod
-    def _compute_leq(values: List[float]) -> float:
-        """
-        Hitung Leq dari daftar nilai dB.
-        Leq = 10 × log10( (1/N) × Σ 10^(Li/10) )
-        Nilai 0.0 dilewati (data tidak valid / sensor belum siap).
-        """
-        valid = [v for v in values if v > 0]
-        if not valid:
-            return 0.0
-        mean_energy = sum(10 ** (v / 10) for v in valid) / len(valid)
-        return round(10 * math.log10(mean_energy), 1)
 
     # ── Floating Mode — data acak dalam batas yang dikonfigurasi ─────────────
     def _simulate(self) -> SensorReading:
@@ -763,19 +503,6 @@ class SparingApp:
                     sent += 1
                 else:
                     self.storage_s1.save(jwt_s1=jwt_w)
-                    saved += 1
-
-            # ── Kualitas udara ────────────────────────────────────────────────
-            link  = self.cfg.get("link_video_id", "")
-            jwt_e = self.net.create_jwt_s1_env(
-                r.pm25, r.pm10, r.pm100, r.noise, r.timestamp, link)
-            if jwt_e:
-                if online and self.net.post(
-                        self.cfg["server_url1"],
-                        json.dumps({"token": jwt_e})):
-                    sent += 1
-                else:
-                    self.storage_s1.save(jwt_s1=jwt_e)
                     saved += 1
 
             # Log setiap 10 slot
