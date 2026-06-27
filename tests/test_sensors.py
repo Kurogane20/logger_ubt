@@ -24,5 +24,5 @@ def test_sim_nh3n_in_range():
 def test_read_all_populates_cod_and_nh3n_when_floating():
     rdr, cfg = _floating_reader()
     reading = rdr.read_all()
-    assert reading.cod > 0
-    assert reading.nh3n > 0
+    assert reading.cod >= cfg["sim_cod_min"]
+    assert reading.nh3n >= cfg["sim_nh3n_min"]
