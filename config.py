@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from constants import IS_LINUX, HAS_MODBUS, HAS_SERIAL_TOOLS, list_ports
+from constants import IS_LINUX, HAS_SERIAL_TOOLS, list_ports
 
 log = logging.getLogger(__name__)
 
@@ -92,39 +92,12 @@ DEFAULT_CONFIG: dict = {
     "sensor_cod_enabled":     True,
     "sensor_nh3n_enabled":    True,
 
-    # Floating per-sensor — True = sensor ini pakai data simulasi MESKI RS485 aktif.
-    # Berguna saat sebagian sensor belum terpasang/rusak tapi sistem harus tetap jalan.
-    # Floating Mode global (simulate_sensors) tetap memaksa SEMUA sensor floating.
-    "float_ph":               False,
-    "float_tss":              False,
-    "float_debit":            False,
-    "float_temp":             False,
-    "float_cod":              False,
-    "float_nh3n":             False,
-
     "offset_ph":              0.0,
     "offset_tss":             0.0,
     "offset_debit":           0.0,
     "offset_temp":            0.0,
     "offset_cod":             0.0,
     "offset_nh3n":            0.0,
-
-    # Floating Mode (tanpa hardware) — aktif otomatis jika pymodbus tidak tersedia
-    "simulate_sensors":       not HAS_MODBUS,
-
-    # Batas nilai acak saat floating mode aktif
-    "sim_ph_min":             7.5,
-    "sim_ph_max":             7.6,
-    "sim_tss_min":            80.0,
-    "sim_tss_max":            90.0,
-    "sim_debit_min":          0.60,   # m³/menit
-    "sim_debit_max":          6.00,   # m³/menit
-    "sim_temp_min":           25.0,
-    "sim_temp_max":           30.0,
-    "sim_cod_min":            10.0,
-    "sim_cod_max":            30.0,
-    "sim_nh3n_min":           0.5,
-    "sim_nh3n_max":           2.0,
 
     # PIN untuk membuka tampilan data processed & batas Server 2
     "secret_pin":             "1234",
