@@ -32,3 +32,7 @@ def test_simulation_keys_removed():
     for k in ("simulate_sensors", "float_ph", "float_cod", "float_nh3n",
               "sim_ph_min", "sim_cod_min", "sim_nh3n_max"):
         assert k not in DEFAULT_CONFIG
+
+
+def test_debit_channel_default_open():
+    assert DEFAULT_CONFIG["debit_channel"] == "open"

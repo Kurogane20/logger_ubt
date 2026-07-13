@@ -214,6 +214,12 @@ class SensorReader:
 
     # ── Debit ─────────────────────────────────────────────────────────────────
     def _read_debit(self) -> float:
+        """Pilih tipe pembacaan debit sesuai config (open/closed channel)."""
+        if self.cfg.get("debit_channel", "open") == "closed":
+            return self._read_debit_closed()
+        return self._read_debit_open()
+
+    def _read_debit_open(self) -> float:
         """
         Slave ID 1, holding register 0-29. Double ABCD dari reg[15-18].
         Datasheet flowmeter mengeluarkan nilai dalam m³/jam → dikonversi ke
@@ -237,6 +243,26 @@ class SensorReader:
         except Exception as e:
             log.error(f"Baca Debit gagal: {e}")
             self._on_error(f"[SENSOR] Baca Debit gagal: {e}")
+        return 0.0
+
+    def _read_debit_closed(self) -> float:
+        """Debit saluran tertutup (closed channel). Float CDAB @ reg 0-1:
+        combined = reg[1]<<16 | reg[0]. Tidak dibagi 60 (asumsi sudah m³/menit)."""
+        if self._mb is None:
+            return 0.0
+        try:
+            r = self._rhr(0, 2, self.cfg["slave_id_debit"])
+            if not r.isError():
+                combined = (r.registers[1] << 16) | r.registers[0]
+                debit = struct.unpack("f", struct.pack("I", combined))[0]
+                return round(debit - self.cfg["offset_debit"], 4)
+            else:
+                msg = f"[SENSOR] Debit(closed) isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca Debit(closed) gagal: {e}")
+            self._on_error(f"[SENSOR] Baca Debit(closed) gagal: {e}")
         return 0.0
 
     # ── COD & NH3-N (generic Modbus scaled reader) ───────────────────────────

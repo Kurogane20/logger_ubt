@@ -33,6 +33,9 @@ DEFAULT_CONFIG: dict = {
     "slave_id_ph":            2,
     "slave_id_tss":           10,
     "slave_id_debit":         1,
+    # Tipe sensor Debit: "open" (open channel, double ABCD /60) atau
+    # "closed" (closed channel, float CDAB @ reg 0-1). Keduanya pakai slave_id_debit.
+    "debit_channel":          "open",
     "slave_id_temp":          5,     # Sensor suhu air
     "slave_id_cod":           7,
     "slave_id_nh3n":          8,

@@ -1106,6 +1106,23 @@ class SparingGUI:
 
         tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=self._sp(6))
 
+        # ── Tipe Debit ────────────────────────────────────────────────────
+        tk.Label(body, text="Tipe Debit",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9), "bold")).pack(anchor="w")
+
+        _debit_channel_labels = {"open": "Open Channel", "closed": "Closed Channel"}
+        debit_type_var = tk.StringVar(
+            value=_debit_channel_labels.get(
+                self.cfg.get("debit_channel", "open"), "Open Channel"))
+        debit_type_combo = ttk.Combobox(body, textvariable=debit_type_var,
+                                        values=["Open Channel", "Closed Channel"],
+                                        state="readonly", width=16,
+                                        font=(_FONT_UI, self._fs(9)))
+        debit_type_combo.pack(anchor="w", pady=(self._sp(4), self._sp(8)))
+
+        tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=self._sp(6))
+
         # ── Per-sensor: Slave ID + Offset ────────────────────────────────
         header_row = tk.Frame(body, bg=C["bg"])
         header_row.pack(fill="x")
@@ -1160,6 +1177,11 @@ class SparingGUI:
                 self.cfg["baud_rate"] = baud
             except (TypeError, ValueError):
                 pass
+
+            # Tipe Debit (open/closed channel)
+            self.cfg["debit_channel"] = ("closed"
+                                         if debit_type_var.get().startswith("Closed")
+                                         else "open")
 
             # Per-sensor slave id / offset — skip silently on bad input
             for _label, slave_key, offset_key in self._SENSOR_CFG:

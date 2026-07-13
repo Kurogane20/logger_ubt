@@ -43,3 +43,27 @@ def test_read_cod_decodes_ieee754_cdab_float(monkeypatch):
     rdr._mb = object()
     monkeypatch.setattr(rdr, "_rhr", lambda addr, count, slave: _R())
     assert rdr._read_cod() == 7.0
+
+
+def test_read_debit_closed_decodes_float_cdab(monkeypatch):
+    rdr = SensorReader({**DEFAULT_CONFIG})
+
+    class _R:
+        registers = [0x0000, 0x3F80]   # CDAB float -> 1.0
+        def isError(self):
+            return False
+
+    rdr._mb = object()
+    rdr.cfg["offset_debit"] = 0.0
+    monkeypatch.setattr(rdr, "_rhr", lambda addr, count, slave: _R())
+    assert rdr._read_debit_closed() == 1.0
+
+
+def test_read_debit_dispatches_by_channel(monkeypatch):
+    rdr = SensorReader({**DEFAULT_CONFIG})
+    monkeypatch.setattr(rdr, "_read_debit_open",   lambda: 11.0)
+    monkeypatch.setattr(rdr, "_read_debit_closed", lambda: 22.0)
+    rdr.cfg["debit_channel"] = "open"
+    assert rdr._read_debit() == 11.0
+    rdr.cfg["debit_channel"] = "closed"
+    assert rdr._read_debit() == 22.0
