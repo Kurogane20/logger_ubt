@@ -900,9 +900,20 @@ class SparingGUI:
             self._flat_btn(btn_bar, text, cmd, bg, fg,
                            pady=6).pack(side="left", padx=(0, self._sp(6)))
 
+    # Field endpoint pengiriman — (label, config key)
+    _ENDPOINT_DEFS = [
+        ("Server 1 — URL kirim",        "server_url1"),
+        ("Server 1 — URL secret key",   "secret_key_url1"),
+        ("Server 1 — UID (Internal)",   "uid1"),
+        ("Server 1 — UID (KLHK)",       "uid1_klhk"),
+        ("Server 2 — URL kirim",        "server_url2"),
+        ("Server 2 — URL secret key",   "secret_key_url2"),
+        ("Server 2 — UID",              "uid2"),
+    ]
+
     def _open_settings(self) -> None:
-        """Dialog pengaturan koneksi RS485 dan port."""
-        w, h = self._sp(400), self._sp(300)
+        """Dialog pengaturan koneksi RS485, port, dan endpoint pengiriman."""
+        w, h = self._sp(560), self._sp(560)
         win = self._make_dialog(w, h, "Pengaturan")
         win.configure(bg=C["bg"])
 
@@ -910,16 +921,29 @@ class SparingGUI:
         tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
         title_bar = tk.Frame(win, bg=C["panel"])
         title_bar.pack(fill="x")
-        tk.Label(title_bar, text="PENGATURAN KONEKSI",
+        tk.Label(title_bar, text="PENGATURAN",
                  bg=C["panel"], fg=C["text"],
                  font=(_FONT_UI, self._fs(12), "bold"),
                  padx=self._sp(16), pady=self._sp(10)).pack(side="left")
         tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
 
+        # Close button — pack dulu ke bawah agar selalu terlihat
+        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(16), pady=self._sp(8))
+        btn_bar.pack(side="bottom", fill="x")
+        self._flat_btn(btn_bar, "✕  Tutup", win.destroy,
+                       C["bg"], C["text_muted"], pady=6).pack(side="right")
+
         body = tk.Frame(win, bg=C["bg"], padx=self._sp(20), pady=self._sp(16))
         body.pack(fill="both", expand=True)
 
-        # Port info row
+        # ── KONEKSI RS485 ─────────────────────────────────────────────────
+        tk.Label(body, text="KONEKSI RS485",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9), "bold")).pack(anchor="w",
+                                                             pady=(0, self._sp(6)))
+
         port_row = tk.Frame(body, bg=C["bg"])
         port_row.pack(fill="x", pady=(0, self._sp(8)))
         tk.Label(port_row, text="Port aktif:",
@@ -930,8 +954,6 @@ class SparingGUI:
                  bg=C["bg"], fg=C["text"],
                  font=(_FONT_MONO, self._fs(9), "bold")).pack(side="left",
                                                                 padx=(self._sp(8), 0))
-
-        tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=(0, self._sp(12)))
 
         # Action buttons — stacked
         def _reconnect_and_close():
@@ -946,10 +968,38 @@ class SparingGUI:
                            pady=8, border=(bg == C["bg"])).pack(
                 fill="x", pady=self._sp(4))
 
-        # Close button
-        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
-        btn_bar = tk.Frame(win, bg=C["panel"],
-                           padx=self._sp(16), pady=self._sp(8))
-        btn_bar.pack(fill="x")
-        self._flat_btn(btn_bar, "✕  Tutup", win.destroy,
-                       C["bg"], C["text_muted"], pady=6).pack(side="right")
+        tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=self._sp(12))
+
+        # ── ENDPOINT PENGIRIMAN ───────────────────────────────────────────
+        tk.Label(body, text="ENDPOINT PENGIRIMAN",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9), "bold")).pack(anchor="w",
+                                                             pady=(0, self._sp(6)))
+
+        endpoint_entries: dict = {}
+        for label, cfg_key in self._ENDPOINT_DEFS:
+            row = tk.Frame(body, bg=C["bg"])
+            row.pack(fill="x", pady=self._sp(3))
+            tk.Label(row, text=label,
+                     bg=C["bg"], fg=C["text_muted"],
+                     font=(_FONT_UI, self._fs(8))).pack(anchor="w")
+            entry = tk.Entry(row, width=44,
+                             font=(_FONT_MONO, self._fs(8)),
+                             bg=C["card"], fg=C["text"],
+                             insertbackground=C["text"],
+                             relief="flat")
+            entry.insert(0, str(self.cfg.get(cfg_key, "")))
+            entry.pack(fill="x", ipady=self._sp(3))
+            endpoint_entries[cfg_key] = entry
+
+        def _save_endpoints():
+            for cfg_key, entry in endpoint_entries.items():
+                self.cfg[cfg_key] = entry.get().strip()
+            save_config(self.cfg)
+            self.app.net.reset_keys()
+            self.log("Endpoint pengiriman diperbarui — secret key akan diambil ulang")
+            win.destroy()
+
+        self._flat_btn(body, "💾  Simpan Endpoint",
+                       _save_endpoints, C["primary"], "white",
+                       pady=8).pack(fill="x", pady=(self._sp(10), self._sp(4)))
