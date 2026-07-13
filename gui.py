@@ -477,8 +477,11 @@ class SparingGUI:
 
         sx = self.root.winfo_screenwidth()
         sy = self.root.winfo_screenheight()
+        # Jangan melebihi layar (mis. 7-inch 800×480) — cegah dialog terpotong
+        w  = min(w, sx - self._sp(20))
+        h  = min(h, sy - self._sp(40))
         x  = (sx - w) // 2
-        y  = (sy - h) // 2
+        y  = max(0, (sy - h) // 2)
         win.geometry(f"{w}x{h}+{x}+{y}")
 
         win.attributes("-topmost", True)   # selalu di atas fullscreen
@@ -922,7 +925,9 @@ class SparingGUI:
     ]
 
     def _open_settings(self) -> None:
-        """Dialog pengaturan koneksi RS485, port, dan endpoint pengiriman."""
+        """Dialog pengaturan koneksi RS485, port, dan endpoint pengiriman.
+        Body bisa di-scroll agar tidak terpotong di layar kecil; tombol
+        Simpan/Tutup selalu terlihat di bar bawah."""
         w, h = self._sp(560), self._sp(560)
         win = self._make_dialog(w, h, "Pengaturan")
         win.configure(bg=C["bg"])
@@ -937,16 +942,53 @@ class SparingGUI:
                  padx=self._sp(16), pady=self._sp(10)).pack(side="left")
         tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
 
-        # Close button — pack dulu ke bawah agar selalu terlihat
+        endpoint_entries: dict = {}
+
+        def _close():
+            try:
+                win.unbind_all("<MouseWheel>")
+            except Exception:
+                pass
+            win.destroy()
+
+        def _save_endpoints():
+            for cfg_key, entry in endpoint_entries.items():
+                self.cfg[cfg_key] = entry.get().strip()
+            save_config(self.cfg)
+            self.app.net.reset_keys()
+            self.log("Endpoint pengiriman diperbarui — secret key akan diambil ulang")
+            _close()
+
+        # ── Button bar bawah — selalu terlihat ────────────────────────────
         tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
         btn_bar = tk.Frame(win, bg=C["panel"],
                            padx=self._sp(16), pady=self._sp(8))
         btn_bar.pack(side="bottom", fill="x")
-        self._flat_btn(btn_bar, "✕  Tutup", win.destroy,
+        self._flat_btn(btn_bar, "💾  Simpan Endpoint",
+                       _save_endpoints, C["primary"], "white",
+                       pady=6).pack(side="left")
+        self._flat_btn(btn_bar, "✕  Tutup", _close,
                        C["bg"], C["text_muted"], pady=6).pack(side="right")
 
-        body = tk.Frame(win, bg=C["bg"], padx=self._sp(20), pady=self._sp(16))
-        body.pack(fill="both", expand=True)
+        # ── Body scrollable ───────────────────────────────────────────────
+        outer = tk.Frame(win, bg=C["bg"])
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, bg=C["bg"], highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=C["bg"], padx=self._sp(20), pady=self._sp(16))
+        body_win = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(body_win, width=e.width))
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _wheel(e):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+        win.bind_all("<MouseWheel>", _wheel)
 
         # ── KONEKSI RS485 ─────────────────────────────────────────────────
         tk.Label(body, text="KONEKSI RS485",
@@ -965,9 +1007,8 @@ class SparingGUI:
                  font=(_FONT_MONO, self._fs(9), "bold")).pack(side="left",
                                                                 padx=(self._sp(8), 0))
 
-        # Action buttons — stacked
         def _reconnect_and_close():
-            win.destroy()
+            _close()
             self._reconnect_rs485()
 
         for text, cmd, bg, fg in [
@@ -987,7 +1028,6 @@ class SparingGUI:
                  font=(_FONT_UI, self._fs(9), "bold")).pack(anchor="w",
                                                              pady=(0, self._sp(6)))
 
-        endpoint_entries: dict = {}
         for label, cfg_key in self._ENDPOINT_DEFS:
             row = tk.Frame(body, bg=C["bg"])
             row.pack(fill="x", pady=self._sp(3))
@@ -1002,18 +1042,6 @@ class SparingGUI:
             entry.insert(0, str(self.cfg.get(cfg_key, "")))
             entry.pack(fill="x", ipady=self._sp(3))
             endpoint_entries[cfg_key] = entry
-
-        def _save_endpoints():
-            for cfg_key, entry in endpoint_entries.items():
-                self.cfg[cfg_key] = entry.get().strip()
-            save_config(self.cfg)
-            self.app.net.reset_keys()
-            self.log("Endpoint pengiriman diperbarui — secret key akan diambil ulang")
-            win.destroy()
-
-        self._flat_btn(body, "💾  Simpan Endpoint",
-                       _save_endpoints, C["primary"], "white",
-                       pady=8).pack(fill="x", pady=(self._sp(10), self._sp(4)))
 
     _BAUD_RATES = ["4800", "9600", "19200", "38400", "57600"]
 
@@ -1039,8 +1067,24 @@ class SparingGUI:
                            padx=self._sp(16), pady=self._sp(10))
         btn_bar.pack(side="bottom", fill="x")
 
-        body = tk.Frame(win, bg=C["bg"], padx=self._sp(16), pady=self._sp(10))
-        body.pack(fill="both", expand=True)
+        outer = tk.Frame(win, bg=C["bg"])
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, bg=C["bg"], highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=C["bg"], padx=self._sp(16), pady=self._sp(10))
+        _body_win = canvas.create_window((0, 0), window=body, anchor="nw")
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(_body_win, width=e.width))
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _wheel(e):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+        win.bind_all("<MouseWheel>", _wheel)
 
         # ── Baud rate ─────────────────────────────────────────────────────
         tk.Label(body, text="Baud rate (bus)",
