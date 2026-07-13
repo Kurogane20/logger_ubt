@@ -33,6 +33,12 @@ class NetworkManager:
         self.keys_fetched = False
         self._on_log      = on_log or (lambda msg: None)
 
+    def reset_keys(self) -> None:
+        """Paksa ambil ulang secret key dari server (mis. setelah endpoint diubah)."""
+        self.keys_fetched = False
+        self.secret_key1 = ""
+        self.secret_key2 = ""
+
     # ── Internet check ────────────────────────────────────────────────────────
     def check_internet(self) -> bool:
         """
