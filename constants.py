@@ -25,7 +25,7 @@ try:
     HAS_MODBUS = True
     log.info("pymodbus tersedia")
 except ImportError:
-    log.warning("pymodbus tidak tersedia — data sensor disimulasi")
+    log.warning("pymodbus tidak tersedia — pembacaan sensor akan 0 (perlu pymodbus + hardware RS485)")
 
 # pyserial port listing
 list_ports = None
