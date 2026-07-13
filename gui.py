@@ -900,6 +900,16 @@ class SparingGUI:
             self._flat_btn(btn_bar, text, cmd, bg, fg,
                            pady=6).pack(side="left", padx=(0, self._sp(6)))
 
+    # Field konfigurasi sensor Modbus — (label, slave_id key, offset key)
+    _SENSOR_CFG = [
+        ("pH",    "slave_id_ph",    "offset_ph"),
+        ("TSS",   "slave_id_tss",   "offset_tss"),
+        ("Debit", "slave_id_debit", "offset_debit"),
+        ("COD",   "slave_id_cod",   "offset_cod"),
+        ("NH3-N", "slave_id_nh3n",  "offset_nh3n"),
+        ("Suhu",  "slave_id_temp",  "offset_temp"),
+    ]
+
     # Field endpoint pengiriman — (label, config key)
     _ENDPOINT_DEFS = [
         ("Server 1 — URL kirim",        "server_url1"),
@@ -963,6 +973,7 @@ class SparingGUI:
         for text, cmd, bg, fg in [
             ("↻  Hubungkan Ulang",       _reconnect_and_close,      C["primary"], "white"),
             ("⌕  Scan Port",             self._scan_ports_dialog,   C["bg"],      C["primary"]),
+            ("⚙  Konfigurasi Sensor",    self._open_sensor_config,  C["bg"],      C["primary"]),
         ]:
             self._flat_btn(body, text, cmd, bg, fg,
                            pady=8, border=(bg == C["bg"])).pack(
@@ -1003,3 +1014,141 @@ class SparingGUI:
         self._flat_btn(body, "💾  Simpan Endpoint",
                        _save_endpoints, C["primary"], "white",
                        pady=8).pack(fill="x", pady=(self._sp(10), self._sp(4)))
+
+    _BAUD_RATES = ["4800", "9600", "19200", "38400", "57600"]
+
+    def _open_sensor_config(self) -> None:
+        """Dialog konfigurasi Modbus: baud rate bus + slave ID/offset per sensor."""
+        w, h = self._sp(430), self._sp(430)
+        win = self._make_dialog(w, h, "Konfigurasi Sensor")
+        win.configure(bg=C["bg"])
+
+        # Header stripe
+        tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
+        title_bar = tk.Frame(win, bg=C["panel"])
+        title_bar.pack(fill="x")
+        tk.Label(title_bar, text="KONFIGURASI SENSOR (MODBUS)",
+                 bg=C["panel"], fg=C["primary"],
+                 font=(_FONT_UI, self._fs(11), "bold"),
+                 padx=self._sp(16), pady=self._sp(10)).pack(side="left")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        # Button bar — pack dulu ke bawah agar selalu terlihat
+        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(16), pady=self._sp(10))
+        btn_bar.pack(side="bottom", fill="x")
+
+        body = tk.Frame(win, bg=C["bg"], padx=self._sp(16), pady=self._sp(10))
+        body.pack(fill="both", expand=True)
+
+        # ── Baud rate ─────────────────────────────────────────────────────
+        tk.Label(body, text="Baud rate (bus)",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9), "bold")).pack(anchor="w")
+
+        baud_var = tk.StringVar(value=str(self.cfg.get("baud_rate", 9600)))
+        baud_combo = ttk.Combobox(body, textvariable=baud_var,
+                                  values=self._BAUD_RATES,
+                                  state="readonly", width=10,
+                                  font=(_FONT_MONO, self._fs(9)))
+        baud_combo.pack(anchor="w", pady=(self._sp(4), self._sp(2)))
+
+        tk.Label(body,
+                 text="Semua sensor di satu bus harus sama.\nCODS-3000-02 default 19200.",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(7)),
+                 justify="left").pack(anchor="w", pady=(0, self._sp(8)))
+
+        tk.Frame(body, bg=C["border"], height=1).pack(fill="x", pady=self._sp(6))
+
+        # ── Per-sensor: Slave ID + Offset ────────────────────────────────
+        header_row = tk.Frame(body, bg=C["bg"])
+        header_row.pack(fill="x")
+        tk.Label(header_row, text="Sensor",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8), "bold"),
+                 width=8, anchor="w").pack(side="left")
+        tk.Label(header_row, text="Slave ID",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8), "bold"),
+                 width=8, anchor="w").pack(side="left")
+        tk.Label(header_row, text="Offset",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8), "bold"),
+                 width=8, anchor="w").pack(side="left")
+
+        slave_entries: dict = {}
+        offset_entries: dict = {}
+
+        for label, slave_key, offset_key in self._SENSOR_CFG:
+            row = tk.Frame(body, bg=C["bg"])
+            row.pack(fill="x", pady=self._sp(2))
+
+            tk.Label(row, text=label,
+                     bg=C["bg"], fg=C["text"],
+                     font=(_FONT_UI, self._fs(9)),
+                     width=8, anchor="w").pack(side="left")
+
+            slave_entry = tk.Entry(row, width=5,
+                                   font=(_FONT_MONO, self._fs(9)),
+                                   bg=C["card"], fg=C["text"],
+                                   insertbackground=C["text"],
+                                   relief="flat")
+            slave_entry.insert(0, str(self.cfg.get(slave_key, "")))
+            slave_entry.pack(side="left", padx=(0, self._sp(10)), ipady=self._sp(2))
+            slave_entries[slave_key] = slave_entry
+
+            offset_entry = tk.Entry(row, width=8,
+                                    font=(_FONT_MONO, self._fs(9)),
+                                    bg=C["card"], fg=C["text"],
+                                    insertbackground=C["text"],
+                                    relief="flat")
+            offset_entry.insert(0, str(self.cfg.get(offset_key, "")))
+            offset_entry.pack(side="left", ipady=self._sp(2))
+            offset_entries[offset_key] = offset_entry
+
+        # ── Save handler ─────────────────────────────────────────────────
+        def _save_and_reconnect():
+            # Baud rate
+            try:
+                baud = int(baud_var.get())
+                self.cfg["baud_rate"] = baud
+            except (TypeError, ValueError):
+                pass
+
+            # Per-sensor slave id / offset — skip silently on bad input
+            for _label, slave_key, offset_key in self._SENSOR_CFG:
+                try:
+                    sid = int(slave_entries[slave_key].get().strip())
+                    if 1 <= sid <= 255:
+                        self.cfg[slave_key] = sid
+                except (TypeError, ValueError):
+                    pass
+
+                try:
+                    off = float(offset_entries[offset_key].get().strip())
+                    self.cfg[offset_key] = off
+                except (TypeError, ValueError):
+                    pass
+
+            save_config(self.cfg)
+            self.log("Konfigurasi sensor disimpan — menghubungkan ulang RS485...")
+
+            import threading
+
+            def _do():
+                ok = self.app.sensor_rdr.reconnect() if getattr(self.app, "sensor_rdr", None) else False
+                self.root.after(0, self.update_connection, "rs485", ok)
+                self.root.after(0, self.log, f"RS485 {'terhubung' if ok else 'GAGAL'} setelah ubah konfigurasi")
+
+            threading.Thread(target=_do, daemon=True, name="reconnect_cfg").start()
+            win.destroy()
+
+        self._flat_btn(btn_bar, "💾  Simpan & Hubungkan Ulang",
+                       _save_and_reconnect, C["primary"], "white",
+                       pady=7).pack(side="left", padx=(0, self._sp(8)),
+                                    ipadx=self._sp(6))
+        self._flat_btn(btn_bar, "✕  Tutup",
+                       win.destroy, C["bg"], C["text_muted"],
+                       pady=7).pack(side="left", ipadx=self._sp(10))
