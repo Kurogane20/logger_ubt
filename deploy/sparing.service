@@ -1,0 +1,30 @@
+[Unit]
+Description=SPARING Monitor — water-quality dashboard (fullscreen HDMI)
+Documentation=file:%h/README.md
+# Start only once the graphical desktop is up (the app is a fullscreen Tk GUI)
+After=graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__DIR__
+
+# ── Display ──────────────────────────────────────────────────────────────
+# X11 on the local HDMI screen. Requires desktop AUTOLOGIN for __USER__.
+# For a Wayland desktop (e.g. Raspberry Pi OS Bookworm) see deploy/README.md.
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/__USER__/.Xauthority
+
+# Give the X server / desktop a moment to finish coming up after boot
+ExecStartPre=/bin/sleep 8
+ExecStart=__PY__ __DIR__/main.py
+
+# Keep it alive — restart if it ever exits/crashes
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+
+[Install]
+WantedBy=graphical.target
