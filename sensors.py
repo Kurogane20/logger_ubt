@@ -265,9 +265,25 @@ class SensorReader:
         return 0.0
 
     def _read_cod(self) -> float:
-        return self._read_scaled(
-            "cod", "slave_id_cod", "reg_addr_cod", "reg_count_cod",
-            "reg_index_cod", "scale_cod", "offset_cod")
+        """CODS-3000-02: slave_id_cod, reg addr 0, 2 registers, IEEE-754 float
+        (CDAB word order: combined = reg[1]<<16 | reg[0]). Satuan mg/L."""
+        if self._mb is None:
+            return 0.0
+        try:
+            r = self._rhr(self.cfg["reg_addr_cod"], self.cfg["reg_count_cod"],
+                          self.cfg["slave_id_cod"])
+            if not r.isError():
+                combined = (r.registers[1] << 16) | r.registers[0]
+                cod = struct.unpack("f", struct.pack("I", combined))[0]
+                return round(cod + self.cfg.get("offset_cod", 0.0), 2)
+            else:
+                msg = f"[SENSOR] COD isError: {r}"
+                log.error(msg)
+                self._on_error(msg)
+        except Exception as e:
+            log.error(f"Baca COD gagal: {e}")
+            self._on_error(f"[SENSOR] Baca COD gagal: {e}")
+        return 0.0
 
     def _read_nh3n(self) -> float:
         return self._read_scaled(

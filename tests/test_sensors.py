@@ -25,8 +25,21 @@ def test_read_scaled_applies_register_scale_and_offset(monkeypatch):
 
     rdr._mb = object()             # pretend hardware present
     monkeypatch.setattr(rdr, "_rhr", lambda addr, count, slave: _FakeResult())
-    rdr.cfg["reg_index_cod"] = 1
-    rdr.cfg["scale_cod"] = 100.0
-    rdr.cfg["offset_cod"] = 0.0
+    rdr.cfg["reg_index_nh3n"] = 1
+    rdr.cfg["scale_nh3n"] = 100.0
+    rdr.cfg["offset_nh3n"] = 0.0
     # value = reg[1] / scale + offset = 1850 / 100 = 18.5
-    assert rdr._read_cod() == 18.5
+    assert rdr._read_nh3n() == 18.5
+
+
+def test_read_cod_decodes_ieee754_cdab_float(monkeypatch):
+    rdr = SensorReader({**DEFAULT_CONFIG})
+
+    class _R:
+        registers = [0x0000, 0x40E0]   # CODS-3000-02 manual example -> 7.00 mg/L
+        def isError(self):
+            return False
+
+    rdr._mb = object()
+    monkeypatch.setattr(rdr, "_rhr", lambda addr, count, slave: _R())
+    assert rdr._read_cod() == 7.0

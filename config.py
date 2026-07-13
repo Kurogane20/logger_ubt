@@ -36,11 +36,12 @@ DEFAULT_CONFIG: dict = {
     "slave_id_temp":          5,     # Sensor suhu air
     "slave_id_cod":           7,
     "slave_id_nh3n":          8,
-    # Pembacaan Modbus generik: nilai = reg[reg_index] / scale + offset
+    # COD — BOQU CODS-3000-02: Modbus float (2 reg) @ addr 0, satuan mg/L.
+    # Sensor default baud 19200 — samakan dgn baud bus (atau ubah baud sensor
+    # via register 61961). slave_id = alamat Modbus sensor (lihat label unit).
     "reg_addr_cod":           0,
     "reg_count_cod":          2,
-    "reg_index_cod":          1,
-    "scale_cod":              100.0,
+    # Pembacaan Modbus generik (nh3n): nilai = reg[reg_index] / scale + offset
     "reg_addr_nh3n":          0,
     "reg_count_nh3n":         2,
     "reg_index_nh3n":         1,

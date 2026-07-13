@@ -7,7 +7,7 @@ def test_cod_nh3n_sensor_flags_present():
 
 
 def test_cod_nh3n_modbus_keys_present():
-    for k in ("slave_id_cod", "reg_addr_cod", "reg_index_cod", "scale_cod",
+    for k in ("slave_id_cod", "reg_addr_cod", "reg_count_cod",
               "offset_cod",
               "slave_id_nh3n", "reg_addr_nh3n", "reg_index_nh3n", "scale_nh3n",
               "offset_nh3n"):
