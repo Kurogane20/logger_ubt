@@ -8,7 +8,6 @@ Sensor yang didukung:
 """
 
 import inspect
-import random
 import struct
 import threading
 import time
@@ -42,7 +41,7 @@ class SensorReader:
 
     # ── Koneksi Modbus ────────────────────────────────────────────────────────
     def _connect(self) -> None:
-        if not HAS_MODBUS or self.cfg.get("simulate_sensors"):
+        if not HAS_MODBUS:
             return
 
         use_hat = self.cfg.get("use_rs485_hat", False)
@@ -174,52 +173,11 @@ class SensorReader:
         self._connect()
         return self._port_ok
 
-    # ── Floating per-sensor ───────────────────────────────────────────────────
-    def _is_float(self, sensor: str) -> bool:
-        """
-        True bila sensor ini disetel floating (simulasi) — entah karena
-        Floating Mode global aktif, atau flag float_<sensor> di-set.
-        Saat True, pembacaan mengembalikan nilai simulasi meski RS485 aktif.
-        """
-        return bool(self.cfg.get("simulate_sensors") or
-                    self.cfg.get(f"float_{sensor}", False))
-
-    # ── Nilai simulasi per-sensor (range sama dengan _simulate() di app.py) ───
-    def _sim_ph(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_ph_min", 7.5),
-                                    c.get("sim_ph_max", 7.6)), 2)
-
-    def _sim_tss(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_tss_min", 80.0),
-                                    c.get("sim_tss_max", 90.0)), 2)
-
-    def _sim_debit(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_debit_min", 0.01),
-                                    c.get("sim_debit_max", 0.10)), 2)
-
-    def _sim_cod(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_cod_min", 10.0),
-                                    c.get("sim_cod_max", 30.0)), 2)
-
-    def _sim_nh3n(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_nh3n_min", 0.5),
-                                    c.get("sim_nh3n_max", 2.0)), 2)
-
-    def _sim_temp(self) -> float:
-        c = self.cfg
-        return round(random.uniform(c.get("sim_temp_min", 25.0),
-                                    c.get("sim_temp_max", 30.0)), 1)
-
     # ── pH ────────────────────────────────────────────────────────────────────
     def _read_ph(self) -> float:
         """Slave ID 2, holding register 0-1. Nilai = reg[1] / 100."""
-        if self._is_float("ph") or self._mb is None:
-            return self._sim_ph()
+        if self._mb is None:
+            return 0.0
         try:
             r = self._rhr(0, 2, self.cfg["slave_id_ph"])
             if not r.isError():
@@ -237,8 +195,8 @@ class SensorReader:
     # ── TSS ───────────────────────────────────────────────────────────────────
     def _read_tss(self) -> float:
         """Slave ID 10, holding register 0-4. Float format CDAB: reg[3]<<16 | reg[2]."""
-        if self._is_float("tss") or self._mb is None:
-            return self._sim_tss()
+        if self._mb is None:
+            return 0.0
         try:
             r = self._rhr(0, 5, self.cfg["slave_id_tss"])
             if not r.isError():
@@ -261,8 +219,8 @@ class SensorReader:
         Datasheet flowmeter mengeluarkan nilai dalam m³/jam → dikonversi ke
         m³/menit (÷60) agar sesuai satuan yang ditampilkan di GUI.
         """
-        if self._is_float("debit") or self._mb is None:
-            return self._sim_debit()
+        if self._mb is None:
+            return 0.0
         try:
             r = self._rhr(0, 30, self.cfg["slave_id_debit"])
             if not r.isError():
@@ -284,10 +242,10 @@ class SensorReader:
     # ── COD & NH3-N (generic Modbus scaled reader) ───────────────────────────
     def _read_scaled(self, sensor: str, slave_key: str, addr_key: str,
                      count_key: str, index_key: str, scale_key: str,
-                     offset_key: str, sim_fn) -> float:
+                     offset_key: str) -> float:
         """Pembacaan Modbus generik: nilai = reg[index] / scale + offset."""
-        if self._is_float(sensor) or self._mb is None:
-            return sim_fn()
+        if self._mb is None:
+            return 0.0
         try:
             addr  = self.cfg[addr_key]
             count = self.cfg[count_key]
@@ -309,12 +267,12 @@ class SensorReader:
     def _read_cod(self) -> float:
         return self._read_scaled(
             "cod", "slave_id_cod", "reg_addr_cod", "reg_count_cod",
-            "reg_index_cod", "scale_cod", "offset_cod", self._sim_cod)
+            "reg_index_cod", "scale_cod", "offset_cod")
 
     def _read_nh3n(self) -> float:
         return self._read_scaled(
             "nh3n", "slave_id_nh3n", "reg_addr_nh3n", "reg_count_nh3n",
-            "reg_index_nh3n", "scale_nh3n", "offset_nh3n", self._sim_nh3n)
+            "reg_index_nh3n", "scale_nh3n", "offset_nh3n")
 
     # ── Suhu air ──────────────────────────────────────────────────────────────
     def _read_temp(self) -> float:
@@ -323,8 +281,8 @@ class SensorReader:
         Register address=0, count=1:
           reg[0] / 10 = suhu (°C)
         """
-        if self._is_float("temp") or self._mb is None:
-            return self._sim_temp()
+        if self._mb is None:
+            return 0.0
         try:
             r = self._rhr(0, 1, self.cfg["slave_id_temp"])
             if not r.isError():

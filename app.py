@@ -5,7 +5,6 @@ Menjalankan dua background thread (sensor & network) dan GUI di main thread.
 
 import json
 import queue
-import random
 import time
 import threading
 import logging
@@ -13,7 +12,7 @@ from typing import List, Optional
 
 import tkinter as tk
 
-from config      import load_config, save_config
+from config      import load_config
 from models      import SensorReading
 from sensors     import SensorReader
 from network     import NetworkManager
@@ -60,11 +59,11 @@ class SparingApp:
         self.sysmon   = SystemMonitor()   # monitor resource untuk diagnosa mati
 
     def start(self) -> None:
-        # Inisialisasi sensor reader (gagal graceful → simulasi aktif)
+        # Inisialisasi sensor reader (gagal graceful → pembacaan 0.0)
         try:
             self.sensor_rdr = SensorReader(self.cfg, on_error=self._log)
         except Exception as e:
-            log.warning(f"SensorReader init gagal (simulasi aktif): {e}")
+            log.warning(f"SensorReader init gagal (pembacaan sensor akan 0.0): {e}")
             self.sensor_rdr = None
 
         # Bangun GUI
@@ -98,8 +97,7 @@ class SparingApp:
             self.gui.log(f"USB RS485 terhubung pada {port}")
         else:
             self.gui.log(f"USB RS485 tidak terdeteksi — port: {port}")
-            if not self.cfg.get("simulate_sensors"):
-                self.gui.log("→ Klik  ⌕ Scan Port  untuk mencari port USB RS485 Anda")
+            self.gui.log("→ Klik  ⌕ Scan Port  untuk mencari port USB RS485 Anda")
 
     # ── Log pump (main thread, via root.after) ─────────────────────────────────
     def _pump_log(self) -> None:
@@ -133,8 +131,7 @@ class SparingApp:
 
         while self._running:
             try:
-                use_hw  = bool(self.sensor_rdr and self.sensor_rdr._port_ok)
-                r       = self.sensor_rdr.read_all() if use_hw else self._simulate()
+                r = self.sensor_rdr.read_all() if self.sensor_rdr else SensorReading(timestamp=time.time())
                 gap_filler.save_state(r)   # simpan pembacaan terakhir untuk gap fill
                 with self._last_r_lock:
                     self._last_r = r
@@ -144,12 +141,7 @@ class SparingApp:
 
                 self.batch.append(r)
                 n        = len(self.batch)
-                if not use_hw:
-                    mode_tag = "[SIM] "          # semua sensor simulasi
-                elif self._any_sensor_float():
-                    mode_tag = "[MIX] "          # sebagian sensor floating
-                else:
-                    mode_tag = ""                # semua dari hardware
+                mode_tag = ""
 
                 self._log(
                     f"{mode_tag}Data {n}/{batch_size} — "
@@ -406,47 +398,6 @@ class SparingApp:
         # Perbarui secret key setelah setiap siklus kirim
         threading.Thread(target=self.net.fetch_all_keys, daemon=True).start()
 
-    # ── Floating Mode — data acak dalam batas yang dikonfigurasi ─────────────
-    def _simulate(self) -> SensorReading:
-        c = self.cfg
-        return SensorReading(
-            timestamp  = time.time(),
-            ph         = round(random.uniform(c.get("sim_ph_min",    7.5),
-                                              c.get("sim_ph_max",    7.6)),   2),
-            tss        = round(random.uniform(c.get("sim_tss_min",   80.0),
-                                              c.get("sim_tss_max",   90.0)),  2),
-            debit      = round(random.uniform(c.get("sim_debit_min", 0.01),
-                                              c.get("sim_debit_max", 0.10)),  2),
-            cod        = round(random.uniform(c.get("sim_cod_min",   10.0),
-                                              c.get("sim_cod_max",   30.0)),  2),
-            nh3n       = round(random.uniform(c.get("sim_nh3n_min",  0.5),
-                                              c.get("sim_nh3n_max",  2.0)),   2),
-            temp       = round(random.uniform(c.get("sim_temp_min",  25.0),
-                                              c.get("sim_temp_max",  30.0)),  1),
-        )
-
-    def toggle_test_mode(self) -> None:
-        """Aktifkan/nonaktifkan floating mode dari tombol GUI."""
-        self.cfg["simulate_sensors"] = not self.cfg.get("simulate_sensors", False)
-        save_config(self.cfg)
-        is_test = self.cfg["simulate_sensors"]
-        self.root.after(0, self.gui.update_test_mode_btn, is_test)
-        if is_test:
-            if self.sensor_rdr:
-                self.sensor_rdr._mb      = None
-                self.sensor_rdr._port_ok = False
-            self._log("[MODE] Floating Mode diaktifkan — data dari sensor dinonaktifkan")
-        else:
-            self._log("[MODE] Floating Mode dinonaktifkan — mencoba koneksi hardware...")
-            def _do_reconnect():
-                ok   = self.sensor_rdr.reconnect() if self.sensor_rdr else False
-                port = self.cfg.get("serial_port", "—")
-                self.root.after(0, self.gui.update_connection, "rs485", ok)
-                self.root.after(0, self.gui.log,
-                                f"RS485 {'terhubung' if ok else 'GAGAL'} — {port}")
-            threading.Thread(target=_do_reconnect,
-                             daemon=True, name="reconnect_fm").start()
-
     # ── Gap fill — isi slot kosong ke Server 1 ────────────────────────────────
     def _fill_gaps(self, auto: bool = False) -> None:
         """
@@ -507,18 +458,6 @@ class SparingApp:
             daemon=True,
             name="gap_fill",
         ).start()
-
-    # ── Floating per-sensor ──────────────────────────────────────────────────
-    _FLOAT_SENSORS = ("ph", "tss", "debit", "cod", "nh3n", "temp")
-
-    def _sensor_is_float(self, name: str) -> bool:
-        """True bila sensor ini floating — global atau per-sensor."""
-        return bool(self.cfg.get("simulate_sensors") or
-                    self.cfg.get(f"float_{name}", False))
-
-    def _any_sensor_float(self) -> bool:
-        """True bila minimal satu sensor di-set floating per-sensor (bukan global)."""
-        return any(self.cfg.get(f"float_{s}", False) for s in self._FLOAT_SENSORS)
 
     def set_operation_mode(self, mode: str) -> None:
         """Set mode operasi sesuai SK 3441/2025 Pasal 6.2.6.6g.

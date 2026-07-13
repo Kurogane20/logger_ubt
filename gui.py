@@ -64,8 +64,6 @@ class SparingGUI:
         self._conn_labels:  dict = {}      # alias untuk update_connection()
         self._sensor_cards: dict = {}      # cfg_key → canvas
         self._op_btn_refs:  dict = {}      # mode → (active_bg, Button)
-        self._test_mode_btn  = None        # no floating button in this layout
-        self._test_mode_var  = None
 
         self._setup_window()
         self._calc_scale()
@@ -685,9 +683,6 @@ class SparingGUI:
         if hasattr(self, "_mode_now_var"):
             self._mode_now_var.set(f"Mode saat ini: {mode}")
 
-    def update_test_mode_btn(self, is_test: bool) -> None:
-        pass  # no floating test-mode button in this layout
-
     def gap_btn_busy(self) -> None:
         pass  # gap button added in a later task
 
@@ -807,80 +802,6 @@ class SparingGUI:
                                text="✓" if _v.get() else "",
                                bg=C["primary"] if _v.get() else C["border"])
                            ).pack(side="left", expand=True, anchor="w")
-
-            tk.Frame(win, bg=C["border"], height=1).pack(
-                fill="x", padx=self._sp(16))
-
-    def _open_float_select(self) -> None:
-        """Dialog atur floating per sensor — sensor ON = data simulasi meski RS485 aktif."""
-        w, h = self._sp(440), self._sp(480)
-        win = self._make_dialog(w, h, "Floating per Sensor")
-        win.configure(bg=C["panel"])
-
-        sensors = [
-            ("float_temp",  "Suhu Air"),
-            ("float_ph",    "pH"),
-            ("float_cod",   "COD"),
-            ("float_tss",   "TSS"),
-            ("float_nh3n",  "NH3-N"),
-            ("float_debit", "Debit"),
-        ]
-
-        check_vars = {}
-
-        def _apply():
-            for key, var in check_vars.items():
-                self.cfg[key] = var.get()
-            save_config(self.cfg)
-            names = [lbl for key, lbl in sensors if self.cfg.get(key, False)]
-            self.log(f"Floating per sensor: "
-                     f"{', '.join(names) if names else '(tidak ada — semua hardware)'}")
-            win.destroy()
-
-        # Tombol bar — pack pertama ke bawah
-        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
-        btn_bar = tk.Frame(win, bg=C["panel"],
-                           padx=self._sp(16), pady=self._sp(10))
-        btn_bar.pack(side="bottom", fill="x")
-        self._flat_btn(btn_bar, "✓  Terapkan",
-                       _apply, C["primary"], "white",
-                       pady=7).pack(side="left", padx=(0, self._sp(8)),
-                                    ipadx=self._sp(10))
-        self._flat_btn(btn_bar, "✕  Batal",
-                       win.destroy, C["bg"], C["text_muted"],
-                       pady=7).pack(side="left", ipadx=self._sp(10))
-
-        # Header
-        tk.Frame(win, bg="#F57F17", height=self._sp(4)).pack(fill="x")
-        tk.Label(win, text="FLOATING PER SENSOR",
-                 bg=C["panel"], fg=C["text"],
-                 font=(_FONT_UI, self._fs(12), "bold"),
-                 padx=self._sp(16), pady=self._sp(12)).pack(anchor="w")
-        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
-
-        info = ("Sensor AKTIF = data SIMULASI meski RS485 terhubung.\n"
-                "Sensor nonaktif = baca dari hardware secara langsung.")
-        tk.Label(win, text=info,
-                 bg=C["panel"], fg=C["text_muted"],
-                 font=(_FONT_UI, self._fs(8)),
-                 justify="left").pack(anchor="w",
-                                      padx=self._sp(16), pady=(self._sp(10), self._sp(4)))
-
-        # Daftar sensor
-        for key, label in sensors:
-            var = tk.BooleanVar(value=self.cfg.get(key, False))
-            check_vars[key] = var
-
-            row = tk.Frame(win, bg=C["panel"],
-                           pady=self._sp(6), padx=self._sp(16))
-            row.pack(fill="x")
-
-            tk.Checkbutton(row, text=label, variable=var,
-                           bg=C["panel"], fg=C["text"],
-                           activebackground=C["panel"],
-                           font=(_FONT_UI, self._fs(10)),
-                           selectcolor=C["card_alt"]
-                           ).pack(side="left", anchor="w")
 
             tk.Frame(win, bg=C["border"], height=1).pack(
                 fill="x", padx=self._sp(16))
@@ -1020,7 +941,6 @@ class SparingGUI:
         for text, cmd, bg, fg in [
             ("↻  Hubungkan Ulang",       _reconnect_and_close,      C["primary"], "white"),
             ("⌕  Scan Port",             self._scan_ports_dialog,   C["bg"],      C["primary"]),
-            ("⚗  Floating per Sensor",   self._open_float_select,   C["bg"],      C["text_muted"]),
         ]:
             self._flat_btn(body, text, cmd, bg, fg,
                            pady=8, border=(bg == C["bg"])).pack(
