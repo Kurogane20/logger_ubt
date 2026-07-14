@@ -56,7 +56,8 @@ def test_read_debit_closed_decodes_float_cdab(monkeypatch):
     rdr._mb = object()
     rdr.cfg["offset_debit"] = 0.0
     monkeypatch.setattr(rdr, "_rhr", lambda addr, count, slave: _R())
-    assert rdr._read_debit_closed() == 1.0
+    # 1.0 m³/jam → ÷60 → m³/menit
+    assert rdr._read_debit_closed() == round(1.0 / 60.0, 4)
 
 
 def test_read_debit_dispatches_by_channel(monkeypatch):
