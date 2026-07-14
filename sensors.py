@@ -247,14 +247,15 @@ class SensorReader:
 
     def _read_debit_closed(self) -> float:
         """Debit saluran tertutup (closed channel). Float CDAB @ reg 0-1:
-        combined = reg[1]<<16 | reg[0]. Tidak dibagi 60 (asumsi sudah m³/menit)."""
+        combined = reg[1]<<16 | reg[0]. Nilai m³/jam → ÷60 ke m³/menit (sesuai GUI)."""
         if self._mb is None:
             return 0.0
         try:
             r = self._rhr(0, 2, self.cfg["slave_id_debit"])
             if not r.isError():
                 combined = (r.registers[1] << 16) | r.registers[0]
-                debit = struct.unpack("f", struct.pack("I", combined))[0]
+                debit_m3h = struct.unpack("f", struct.pack("I", combined))[0]
+                debit = debit_m3h / 60.0   # m³/jam → m³/menit (sesuai GUI)
                 return round(debit - self.cfg["offset_debit"], 4)
             else:
                 msg = f"[SENSOR] Debit(closed) isError: {r}"
