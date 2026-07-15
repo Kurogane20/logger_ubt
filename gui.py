@@ -134,8 +134,11 @@ class SparingGUI:
         self._content.pack(fill="both", expand=True)
         body = tk.Frame(self._content, bg=C["bg"])
         body.pack(fill="both", expand=True, padx=self._sp(12), pady=self._sp(8))
-        self._left = tk.Frame(body, bg=C["bg"])
-        self._left.pack(side="left", fill="both", expand=True, padx=(0, self._sp(8)))
+        # Scrollable — pada layar pendek/resolusi rendah, grid sensor + log
+        # bisa lebih tinggi dari layar; scroll mencegah konten terpotong.
+        _, self._left = self._make_scrollable(
+            body, C["bg"], side="left", fill="both", expand=True,
+            padx=(0, self._sp(8)))
         self._build_sensor_grid(self._left)
         self._build_log_panel(self._left)
         self._build_sidebar(body)
@@ -370,10 +373,17 @@ class SparingGUI:
         outer = tk.Frame(parent, bg=C["bg"], width=self._sp(280))
         outer.pack(side="right", fill="y")
         outer.pack_propagate(False)
-        _, side = self._rounded_canvas(outer, C["card"], radius=self._sp(14),
+        # autosize_height=False — kartu rounded mengikuti tinggi layar yang
+        # tersedia (bukan tinggi konten), lalu isinya dibungkus scrollable
+        # agar tidak pernah terpotong di layar 7-inch beresolusi rendah.
+        _, card = self._rounded_canvas(outer, C["card"], radius=self._sp(14),
+                                       autosize_height=False,
                                        fill="both", expand=True)
-        inner = tk.Frame(side, bg=C["card"])
-        inner.pack(fill="both", expand=True, padx=self._sp(12), pady=self._sp(10))
+        _, scroll_inner = self._make_scrollable(card, C["card"],
+                                                fill="both", expand=True)
+        inner = tk.Frame(scroll_inner, bg=C["card"],
+                         padx=self._sp(12), pady=self._sp(10))
+        inner.pack(fill="both", expand=True)
 
         # Clock — date + time
         self._date_var  = tk.StringVar()
@@ -494,12 +504,23 @@ class SparingGUI:
     def _rounded_canvas(self, parent, card_bg: str,
                         radius: int = None,
                         outer_bg: str = None,
+                        autosize_height: bool = True,
                         **pack_kw) -> tuple:
         """
         Buat Canvas dengan latar sudut melengkung (smooth polygon).
         Kembalikan (canvas, inner_frame).
         canvas  — dipasang ke parent sesuai pack_kw
         inner   — Frame tempat konten diletakkan
+
+        autosize_height:
+          True  (default) — canvas mengikuti tinggi konten (cocok untuk
+                 kartu kecil yang berdiri sendiri, mis. kartu sensor/log).
+          False — canvas mengikuti tinggi yang dialokasikan parent (fill/
+                 expand), TIDAK membesar mengikuti konten. Dipakai untuk
+                 wadah setinggi layar (mis. sidebar) agar tidak mendorong
+                 layout lain keluar dari batas layar — konten di dalamnya
+                 harus dibungkus scrollable (lihat _make_scrollable) agar
+                 tidak terpotong.
         """
         r        = radius   if radius   is not None else self._sp(16)
         outer_bg = outer_bg if outer_bg is not None else C["bg"]
@@ -536,13 +557,52 @@ class SparingGUI:
             canvas.after_idle(_redraw)
 
         def _on_inner_resize(event=None):
-            req_h = inner.winfo_reqheight() + pad * 2
-            if req_h > 4 and abs(canvas.winfo_height() - req_h) > 1:
-                canvas.configure(height=req_h)
+            if autosize_height:
+                req_h = inner.winfo_reqheight() + pad * 2
+                if req_h > 4 and abs(canvas.winfo_height() - req_h) > 1:
+                    canvas.configure(height=req_h)
             canvas.after_idle(_redraw)
 
         canvas.bind("<Configure>", _on_canvas_resize)
         inner.bind("<Configure>",  _on_inner_resize)
+        return canvas, inner
+
+    def _make_scrollable(self, parent, bg: str, **pack_kw) -> tuple:
+        """
+        Bungkus konten dalam Canvas + Scrollbar vertikal agar TIDAK PERNAH
+        terpotong di layar kecil/beresolusi rendah (mis. layar 7-inch dengan
+        resolusi berbeda-beda) — konten yang lebih tinggi dari ruang yang
+        tersedia otomatis bisa di-scroll (mouse wheel saat kursor di
+        atasnya, atau drag scrollbar) alih-alih hilang/terpotong.
+        Kembalikan (canvas, inner_frame) — konten diletakkan di inner_frame.
+        """
+        outer = tk.Frame(parent, bg=bg)
+        if pack_kw:
+            outer.pack(**pack_kw)
+
+        canvas = tk.Canvas(outer, bg=bg, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        inner  = tk.Frame(canvas, bg=bg)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfig(win_id, width=e.width))
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _wheel(e):
+            if canvas.winfo_exists():
+                canvas.yview_scroll(int(-e.delta / 120), "units")
+        # Bind mouse wheel hanya saat kursor di atas canvas ini (bukan
+        # bind_all permanen) — supaya beberapa area scrollable yang aktif
+        # bersamaan (mis. konten utama + sidebar) tidak saling rebutan.
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _wheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
         return canvas, inner
 
     def _card(self, parent, title: str, accent: str,
