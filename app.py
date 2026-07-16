@@ -31,7 +31,10 @@ class SparingApp:
 
     Thread model:
       main thread  → GUI (tkinter mainloop)
-      thread sensor  → baca sensor setiap interval, kirim data saat batch penuh
+      thread sensor  → baca sensor setiap interval (presisi — tidak menunggu HTTP)
+      thread send    → kirim ke Server 1/2 dari antrian (async, terpisah dari
+                        siklus baca agar jeda antar pembacaan tidak molor saat
+                        internet/server lambat)
       thread network → cek internet & ambil secret key setiap 30 detik
 
     Komunikasi thread → GUI melalui root.after(0, callback).
@@ -53,6 +56,7 @@ class SparingApp:
         self._running    = True
         self._gap_filled = False   # pastikan gap fill hanya jalan sekali
         self._q: queue.Queue = queue.Queue()
+        self._send_q: queue.Queue = queue.Queue()  # job kirim (s1/s2), diproses thread terpisah
         self._sensor_wake = threading.Event()     # set() untuk mempersingkat sleep sensor loop
         self._last_r: Optional[SensorReading] = None  # reading terakhir untuk sinkronisasi sim
         self._last_r_lock = threading.Lock()
@@ -84,6 +88,8 @@ class SparingApp:
         # Background threads
         threading.Thread(target=self._sensor_loop,
                          daemon=True, name="sensor").start()
+        threading.Thread(target=self._send_worker,
+                         daemon=True, name="send").start()
         threading.Thread(target=self._network_loop,
                          daemon=True, name="network").start()
         if self.cfg.get("sysmon_enabled", True):
@@ -164,13 +170,15 @@ class SparingApp:
                 self.root.after(0, self.gui.update_sensors, r)
                 self.root.after(0, self.gui.update_count, n, batch_size)
 
-                # Server 1: kualitas air (pH, TSS, Debit) — per 2 menit
-                self._send_s1_water(r)
+                # Server 1 & 2: pengiriman dilempar ke send worker (thread
+                # terpisah) — siklus baca sensor tidak ikut menunggu HTTP,
+                # jadi jeda antar pembacaan tetap presisi ~interval detik
+                # meski internet/server sedang lambat merespons.
+                self._send_q.put(("s1", r, self._op_mode))
 
-                # Server 2: kirim saat batch penuh (jika diaktifkan)
                 if n >= batch_size:
                     if self.cfg.get("server2_enabled", True):
-                        self._send_s2_batch()
+                        self._send_q.put(("s2", list(self.batch), self._op_mode))
                     else:
                         self._log("[S2] Pengiriman Server 2 dinonaktifkan — batch dibuang")
                     self.batch.clear()
@@ -182,6 +190,27 @@ class SparingApp:
 
             self._sensor_wake.wait(timeout=interval)
             self._sensor_wake.clear()
+
+    # ── Send worker (background thread) ───────────────────────────────────────
+    def _send_worker(self) -> None:
+        """
+        Proses antrian pengiriman ke Server 1/2 (job dari _sensor_loop).
+        Berjalan di thread sendiri agar HTTP yang lambat (timeout hingga 30
+        detik) tidak menunda siklus baca sensor berikutnya. Kalau backlog
+        menumpuk (internet mati lama), pembacaan tetap presisi — pengiriman
+        tinggal menyusul begitu antrian diproses/koneksi pulih.
+        """
+        while True:
+            kind, payload, op_mode = self._send_q.get()
+            try:
+                if kind == "s1":
+                    self._send_s1_water(payload, op_mode)
+                elif kind == "s2":
+                    self._send_s2_batch(payload, op_mode)
+            except Exception as e:
+                self._log(f"[ERROR] send worker: {e}")
+            finally:
+                self._send_q.task_done()
 
     # ── Network loop (background thread) ──────────────────────────────────────
     def _network_loop(self) -> None:
@@ -303,9 +332,12 @@ class SparingApp:
                 self._log(f"[ERROR] sysmon loop: {e}")
 
     # ── Kirim ke Server 1 — kualitas air, per 2 menit ────────────────────────
-    def _send_s1_water(self, r: SensorReading) -> None:
+    def _send_s1_water(self, r: SensorReading, op_mode: str) -> None:
         """
         Kirim data kualitas air (pH, TSS, Debit) ke Server 1 setiap 2 menit.
+        Dipanggil dari send worker — op_mode adalah mode operasi pada SAAT
+        data ini dibaca (ditangkap di sensor loop), bukan mode saat ini,
+        supaya konsisten walau mode berubah sebelum job ini diproses.
         Format JWT flat: uid, pH, tss, debit, cod, nh3n, datetime, tl.
         """
         int_on  = self.cfg.get("logger_internal", True)
@@ -314,8 +346,7 @@ class SparingApp:
         # Hitung nilai processed sekali untuk log KLHK
         proc_ph, proc_tss, proc_debit, *_ = self.net.get_processed(r)
 
-        op = self._op_mode
-        sc = {"stopped": -1, "calibrating": -2, "malfunction": -3}.get(op)
+        sc = {"stopped": -1, "calibrating": -2, "malfunction": -3}.get(op_mode)
         jwts = []
         if sc is not None:
             if int_on:
@@ -357,13 +388,14 @@ class SparingApp:
 
     # ── Kirim batch 30 data ────────────────────────────────────────────────────
     # ── Kirim ke Server 2 — setiap batch penuh (30 data × 2 menit = 60 menit) ─
-    def _send_s2_batch(self) -> None:
+    def _send_s2_batch(self, batch: List[SensorReading], op_mode: str) -> None:
         """
-        Kirim batch 30 data ke Server 2 (data processed dengan filter min/max).
+        Kirim batch data ke Server 2 (data processed dengan filter min/max).
+        Dipanggil dari send worker dengan salinan batch & op_mode yang
+        ditangkap di sensor loop pada saat batch itu penuh.
         Jika offline atau gagal, simpan ke buffer_s2.
         """
-        batch  = list(self.batch)
-        _sc    = {"stopped": -1, "calibrating": -2, "malfunction": -3}.get(self._op_mode)
+        _sc    = {"stopped": -1, "calibrating": -2, "malfunction": -3}.get(op_mode)
         jwt2   = (self.net.create_jwt2_status(_sc, len(batch) or self.cfg["data_batch_size"])
                   if _sc is not None else self.net.create_jwt2(batch))
         now    = time.time()
