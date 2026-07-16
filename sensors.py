@@ -162,16 +162,20 @@ class SensorReader:
         return self._rhr_call(address, count, slave_id)
 
     def reconnect(self) -> bool:
-        """Tutup dan buka ulang koneksi. Dipanggil dari tombol GUI."""
-        if self._mb:
-            try:
-                self._mb.close()
-            except Exception:
-                pass
-            self._mb = None
-        self._port_ok = False
-        self._connect()
-        return self._port_ok
+        """Tutup dan buka ulang koneksi. Dipanggil dari tombol GUI.
+        Mengambil _lock agar tidak balapan dengan read_all() yang sedang
+        berjalan di thread sensor (yang bisa membuat _mb ditutup di
+        tengah transaksi Modbus dan menyebabkan port gagal dibuka ulang)."""
+        with self._lock:
+            if self._mb:
+                try:
+                    self._mb.close()
+                except Exception:
+                    pass
+                self._mb = None
+            self._port_ok = False
+            self._connect()
+            return self._port_ok
 
     # ── pH ────────────────────────────────────────────────────────────────────
     def _read_ph(self) -> float:
