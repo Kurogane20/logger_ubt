@@ -471,6 +471,18 @@ class SparingGUI:
             tk.Label(parent, textvariable=var, bg=C["card"], fg=C["text_muted"],
                      font=(_FONT_UI, self._fs(8))).pack(anchor="w")
 
+        # Progres batch menuju Server 2 (KLHK) — dikirim setiap data_batch_size
+        # data terkumpul (default 30, tiap data ~2 menit).
+        batch_total = self.cfg.get("data_batch_size", 30)
+        self._batch_count_var = tk.StringVar(
+            value=f"Data terkumpul: 0/{batch_total} → Server 2 (KLHK)")
+        tk.Label(parent, textvariable=self._batch_count_var, bg=C["card"],
+                 fg=C["text"], font=(_FONT_MONO, self._fs(8), "bold")).pack(
+            anchor="w", pady=(self._sp(4), 1))
+        self._batch_progress = tk.DoubleVar(value=0)
+        ttk.Progressbar(parent, variable=self._batch_progress,
+                        maximum=batch_total).pack(fill="x", pady=(0, self._sp(2)))
+
     # ═══════════════════════════════════════════════════════════════════════════
     # WIDGET HELPERS (carried verbatim from old gui.py)
     # ═══════════════════════════════════════════════════════════════════════════
@@ -700,6 +712,10 @@ class SparingGUI:
     def update_count(self, n: int, total: int = 30) -> None:
         if hasattr(self, "_statusbar_var"):
             self._statusbar_var.set(f"Data terkumpul: {n}/{total}")
+        if hasattr(self, "_batch_count_var"):
+            self._batch_count_var.set(f"Data terkumpul: {n}/{total} → Server 2 (KLHK)")
+        if hasattr(self, "_batch_progress"):
+            self._batch_progress.set(n)
 
     def update_last_tx(self, ts: float) -> None:
         t = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")

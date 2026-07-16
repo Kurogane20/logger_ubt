@@ -22,6 +22,11 @@ sparing.log
 # Brainstorming visual companion
 .superpowers/
 
+# Claude Code
+CLAUDE.md
+.claude/
+graphify-out/
+
 # IDE / OS
 .vscode/
 .idea/
