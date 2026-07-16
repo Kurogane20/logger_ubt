@@ -2,8 +2,10 @@ from config import DEFAULT_CONFIG
 
 
 def test_cod_nh3n_sensor_flags_present():
-    assert DEFAULT_CONFIG["sensor_cod_enabled"] is True
-    assert DEFAULT_CONFIG["sensor_nh3n_enabled"] is True
+    # Nonaktif default — aktifkan manual setelah hardware terpasang, agar
+    # tidak polling slave ID yang belum ada (bisa ganggu sensor lain di bus).
+    assert DEFAULT_CONFIG["sensor_cod_enabled"] is False
+    assert DEFAULT_CONFIG["sensor_nh3n_enabled"] is False
 
 
 def test_cod_nh3n_modbus_keys_present():

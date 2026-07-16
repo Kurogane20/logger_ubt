@@ -13,7 +13,9 @@ def _net():
 
 
 def test_water_jwt_includes_cod_and_nh3n():
-    n, _ = _net()
+    n, cfg = _net()
+    cfg["sensor_cod_enabled"] = True
+    cfg["sensor_nh3n_enabled"] = True
     r = SensorReading(ph=7.0, tss=50.0, debit=1.2, cod=18.0, nh3n=1.1)
     token = n.create_jwt1_water(r, processed=False)
     payload = jwt.decode(token, "testkey1", algorithms=["HS256"])
@@ -37,7 +39,9 @@ def test_apply_limits_caps_cod_below_min():
 
 
 def test_jwt2_includes_cod_nh3n():
-    n, _ = _net()
+    n, cfg = _net()
+    cfg["sensor_cod_enabled"] = True
+    cfg["sensor_nh3n_enabled"] = True
     r = SensorReading(ph=7.0, tss=50.0, debit=1.2, cod=18.0, nh3n=1.1)
     token = n.create_jwt2([r])
     payload = jwt.decode(token, "testkey2", algorithms=["HS256"])
