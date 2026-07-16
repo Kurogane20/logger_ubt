@@ -97,8 +97,12 @@ DEFAULT_CONFIG: dict = {
     "sensor_tss_enabled":     True,
     "sensor_debit_enabled":   True,
     "sensor_temp_enabled":    True,   # Suhu air (°C)
-    "sensor_cod_enabled":     True,
-    "sensor_nh3n_enabled":    True,
+    # COD/NH3-N nonaktif default — aktifkan manual via dialog "Pilih Sensor
+    # Aktif" setelah sensor fisik terpasang & Slave ID diatur (Konfigurasi
+    # Sensor). Mencegah polling Modbus ke slave ID yang belum ada hardware-nya
+    # (bisa mengganggu komunikasi sensor lain yang berbagi bus RS485).
+    "sensor_cod_enabled":     False,
+    "sensor_nh3n_enabled":    False,
 
     "offset_ph":              0.0,
     "offset_tss":             0.0,
