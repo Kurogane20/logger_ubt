@@ -18,6 +18,7 @@ gap_state.json
 data_buffer*.json
 sparing.log
 *.log
+history/
 
 # Brainstorming visual companion
 .superpowers/

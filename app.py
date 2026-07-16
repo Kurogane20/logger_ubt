@@ -19,6 +19,7 @@ from network     import NetworkManager
 from storage     import DataStorage
 from gui         import SparingGUI
 import gap_filler
+import history
 from sysmon      import SystemMonitor
 
 log = logging.getLogger(__name__)
@@ -59,6 +60,13 @@ class SparingApp:
         self.sysmon   = SystemMonitor()   # monitor resource untuk diagnosa mati
 
     def start(self) -> None:
+        # Buang riwayat CSV yang sudah lewat masa retensi (arsip flashdisk)
+        removed = history.prune_old(
+            self.cfg.get("history_dir", "history"),
+            self.cfg.get("history_retention_days", 180))
+        if removed:
+            log.info(f"Riwayat: {removed} file CSV lama dihapus (retensi)")
+
         # Inisialisasi sensor reader (gagal graceful → pembacaan 0.0)
         try:
             self.sensor_rdr = SensorReader(self.cfg, on_error=self._log)
@@ -133,6 +141,10 @@ class SparingApp:
             try:
                 r = self.sensor_rdr.read_all() if self.sensor_rdr else SensorReading(timestamp=time.time())
                 gap_filler.save_state(r)   # simpan pembacaan terakhir untuk gap fill
+                # Arsip permanen (CSV harian) — dicatat terlepas dari sukses/
+                # gagalnya pengiriman ke server; ditarik lewat backup flashdisk.
+                history.append_reading(r, self._op_mode,
+                                       self.cfg.get("history_dir", "history"))
                 with self._last_r_lock:
                     self._last_r = r
                 port_ok = bool(self.sensor_rdr and self.sensor_rdr._port_ok)
