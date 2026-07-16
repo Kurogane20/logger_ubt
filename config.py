@@ -79,6 +79,10 @@ DEFAULT_CONFIG: dict = {
     "interval_seconds":       120,
     "data_batch_size":        30,
 
+    # ── Riwayat pembacaan sensor (arsip CSV harian, untuk backup flashdisk) ──
+    "history_dir":             "history",
+    "history_retention_days":  180,
+
     # ── Monitor resource sistem (diagnosa penyebab device mati) ──────────────
     "sysmon_enabled":         True,    # catat CPU/RAM/disk/suhu ke resource.log
     "sysmon_interval_seconds": 60,     # interval snapshot resource
