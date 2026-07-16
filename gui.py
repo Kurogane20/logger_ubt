@@ -27,6 +27,7 @@ from constants import (
 from config  import save_config, scan_serial_ports
 from models  import SensorReading
 from device_info import get_serial, get_macs
+import backup
 
 if TYPE_CHECKING:
     from app import SparingApp
@@ -979,6 +980,122 @@ class SparingGUI:
             self._flat_btn(btn_bar, text, cmd, bg, fg,
                            pady=6).pack(side="left", padx=(0, self._sp(6)))
 
+    def _open_backup_dialog(self) -> None:
+        """Dialog backup riwayat data + config/log ke flashdisk USB."""
+        import threading
+
+        win = self._make_dialog(self._sp(480), self._sp(380), "Backup ke Flashdisk")
+        win.configure(bg=C["bg"])
+
+        tk.Frame(win, bg=C["primary"], height=self._sp(4)).pack(fill="x")
+
+        title_bar = tk.Frame(win, bg=C["panel"])
+        title_bar.pack(fill="x")
+        tk.Label(title_bar, text="BACKUP KE FLASHDISK",
+                 bg=C["panel"], fg=C["text"],
+                 font=(_FONT_UI, self._fs(11), "bold"),
+                 padx=self._sp(16), pady=self._sp(10)).pack(side="left")
+        tk.Frame(win, bg=C["border"], height=1).pack(fill="x")
+
+        # ── Button bar bawah — selalu terlihat ────────────────────────────
+        tk.Frame(win, bg=C["border"], height=1).pack(side="bottom", fill="x")
+        btn_bar = tk.Frame(win, bg=C["panel"],
+                           padx=self._sp(12), pady=self._sp(8))
+        btn_bar.pack(side="bottom", fill="x")
+
+        body = tk.Frame(win, bg=C["bg"], padx=self._sp(16), pady=self._sp(12))
+        body.pack(fill="both", expand=True)
+
+        tk.Label(body,
+                 text="Colok flashdisk USB, lalu pilih drive tujuan di bawah. "
+                      "Backup mencakup riwayat data lengkap, config, dan log.",
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(9)),
+                 justify="left", wraplength=self._sp(440)).pack(
+            anchor="w", pady=(0, self._sp(8)))
+
+        list_frame = tk.Frame(body, bg=C["shadow"], padx=1, pady=1)
+        list_frame.pack(fill="both", expand=True)
+
+        listbox = tk.Listbox(
+            list_frame,
+            font=(_FONT_MONO, self._fs(11)),
+            bg=C["card"], fg=C["text"],
+            selectbackground=C["primary"],
+            selectforeground="white",
+            relief="flat", bd=0, height=6,
+            activestyle="none",
+        )
+        listbox.pack(fill="both", expand=True)
+
+        info_var = tk.StringVar(value="")
+        tk.Label(body, textvariable=info_var,
+                 bg=C["bg"], fg=C["text_muted"],
+                 font=(_FONT_UI, self._fs(8))).pack(
+            anchor="w", pady=(self._sp(6), 0))
+
+        drives: list = []
+
+        def _refresh():
+            listbox.delete(0, "end")
+            drives.clear()
+            drives.extend(backup.list_removable_drives())
+            for d in drives:
+                listbox.insert("end", f"  {d.label}   ({d.free_gb:.1f} GB bebas)")
+            if not drives:
+                listbox.insert("end", "  (tidak ada flashdisk terdeteksi)")
+                info_var.set(
+                    "Tidak ada flashdisk terdeteksi — colok USB lalu klik Refresh.")
+            else:
+                info_var.set(f"{len(drives)} flashdisk ditemukan")
+
+        def _do_backup():
+            sel = listbox.curselection()
+            if not sel or not drives:
+                info_var.set("Pilih drive tujuan terlebih dahulu.")
+                return
+            drive = drives[sel[0]]
+
+            backup_btn.configure(state="disabled")
+            info_var.set("Sedang backup...")
+
+            def _do():
+                try:
+                    result = backup.backup_to(drive.path, self.cfg)
+                except Exception as e:
+                    def _fail():
+                        info_var.set(f"Backup gagal: {e}")
+                        backup_btn.configure(state="normal")
+                    self.root.after(0, self.log, f"✗ Backup gagal: {e}")
+                    self.root.after(0, _fail)
+                    return
+
+                def _ok():
+                    info_var.set(
+                        f"✓ Backup selesai — {result['files']} file "
+                        f"({result['bytes']/1e6:.1f} MB) → {result['dest']}")
+                    backup_btn.configure(state="normal")
+                self.root.after(
+                    0, self.log,
+                    f"✓ Backup selesai — {result['files']} file "
+                    f"({result['bytes']/1e6:.1f} MB) → {result['dest']}")
+                self.root.after(0, _ok)
+
+            threading.Thread(target=_do, daemon=True, name="backup").start()
+
+        _refresh()
+
+        for text, cmd, bg, fg in [
+            ("↻  Refresh",             _refresh,    C["bg"],      C["primary"]),
+            ("💾  Backup Sekarang",    _do_backup,  C["primary"], "white"),
+            ("✕  Tutup",               win.destroy, C["bg"],      C["text_muted"]),
+        ]:
+            btn = self._flat_btn(btn_bar, text, cmd, bg, fg,
+                                 pady=6)
+            btn.pack(side="left", padx=(0, self._sp(6)))
+            if text.startswith("💾"):
+                backup_btn = btn
+
     # Field konfigurasi sensor Modbus — (label, slave_id key, offset key)
     _SENSOR_CFG = [
         ("pH",    "slave_id_ph",    "offset_ph"),
@@ -1091,6 +1208,7 @@ class SparingGUI:
             ("↻  Hubungkan Ulang",       _reconnect_and_close,      C["primary"], "white"),
             ("⌕  Scan Port",             self._scan_ports_dialog,   C["bg"],      C["primary"]),
             ("⚙  Konfigurasi Sensor",    self._open_sensor_config,  C["bg"],      C["primary"]),
+            ("💾  Backup ke Flashdisk",  self._open_backup_dialog,  C["bg"],      C["primary"]),
         ]:
             self._flat_btn(body, text, cmd, bg, fg,
                            pady=8, border=(bg == C["bg"])).pack(
